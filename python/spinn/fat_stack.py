@@ -527,3 +527,80 @@ class SentencePairModel(Chain):
         self.accuracy = self.accFun(y, self.__mod.array(y_batch))
 
         return y, accum_loss
+
+
+class SentenceModel(Chain):
+    def __init__(self, model_dim, word_embedding_dim,
+                 seq_length, initial_embeddings, num_classes, mlp_dim,
+                 keep_rate,
+                 gpu=-1,
+                ):
+        super(SentenceModel, self).__init__(
+            projection=L.Linear(word_embedding_dim, model_dim, nobias=True),
+            x2h=SPINN(model_dim, gpu=gpu, keep_rate=keep_rate),
+            # batch_norm_0=L.BatchNormalization(model_dim, model_dim),
+            # batch_norm_1=L.BatchNormalization(mlp_dim, mlp_dim),
+            # batch_norm_2=L.BatchNormalization(mlp_dim, mlp_dim),
+            l0=L.Linear(model_dim, 100),
+            l1=L.Linear(100, num_classes),
+            # l2=L.Linear(mlp_dim, num_classes)
+        )
+        self.classifier = CrossEntropyClassifier(gpu)
+        self.__gpu = gpu
+        self.__mod = cuda.cupy if gpu >= 0 else np
+        self.accFun = accuracy.accuracy
+        self.initial_embeddings = initial_embeddings
+        self.keep_rate = keep_rate
+        self.word_embedding_dim = word_embedding_dim
+        self.model_dim = model_dim
+
+    def __call__(self, sentences, transitions, y_batch=None, train=True):
+        ratio = 1 - self.keep_rate
+
+        # Get Embeddings
+
+        x = self.initial_embeddings.take(sentences, axis=0
+            ).astype(np.float32)
+        batch_size, seq_length = x.shape[0], x.shape[1]
+
+        if self.__gpu >= 0:
+            x = cuda.to_gpu(x)
+
+        x = Variable(x, volatile=not train)
+
+        batch_size, seq_length = x.shape[0], x.shape[1]
+
+        # x = F.dropout(x, ratio=ratio, train=train)
+        x = F.reshape(x, (batch_size * seq_length, self.word_embedding_dim))
+        x = self.projection(x)
+        x = F.reshape(x, (batch_size, seq_length, self.model_dim))
+
+        # Extract Transitions
+
+        # Pass through Sentence Encoders.
+        h = self.x2h(x, transitions, train=train)
+
+        # Pass through Classifier.
+        # h = self.batch_norm_0(h, test=not train)
+        # h = F.dropout(h, ratio, train)
+        # h = F.relu(h)
+        h = self.l0(h)
+        # h = self.batch_norm_1(h, test=not train)
+        # h = F.dropout(h, ratio, train)
+        h = F.relu(h)
+        h = self.l1(h)
+        # h = self.batch_norm_2(h, test=not train)
+        # h = F.dropout(h, ratio, train)
+        # h = F.relu(h)
+        # h = self.l2(h)
+        y = h
+
+        # Calculate Loss & Accuracy.
+        # y = F.dropout(y, ratio, train)
+        # print(y_batch)
+        # import ipdb; ipdb.set_trace()
+        # print([y[i].data.argmax() for i in range(len(y_batch))])
+        accum_loss = self.classifier(y, Variable(y_batch, volatile=not train), train)
+        self.accuracy = self.accFun(y, self.__mod.array(y_batch))
+
+        return y, accum_loss

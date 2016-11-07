@@ -138,21 +138,22 @@ def MakeTrainingIterator(sources, batch_size, smart_batches=True, use_peano=True
 
     def get_key(num_transitions):
         if use_peano:
-            prem_len, hyp_len = num_transitions
-            key = peano(prem_len, hyp_len)
-            return key
+            # prem_len, hyp_len = num_transitions
+            # key = peano(prem_len, hyp_len)
+            return num_transitions
         else:
             return max(xy)
 
     def build_batches():
         dataset_size = len(sources[0])
-        seq_length = len(sources[0][0][:,0])
+        # HACK: This will only work for arithmetic
+        seq_length = sources[0][0].shape[0]
         order = range(dataset_size)
         random.shuffle(order)
         order = np.array(order)
 
         num_splits = 10 # TODO: Should we be smarter about split size?
-        order_limit = len(order) / num_splits * num_splits 
+        order_limit = len(order) / num_splits * num_splits
         order = order[:order_limit]
         order_splits = np.split(order, num_splits)
         batches = []
@@ -377,7 +378,7 @@ class SimpleProgressBar(object):
         self.begin = time.time()
         self.bar_length = bar_length
         self.msg = msg
-        
+
     def step(self, i, total):
         sys.stdout.write('\r')
         pct = (i / float(total)) * 100

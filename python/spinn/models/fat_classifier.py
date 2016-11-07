@@ -32,6 +32,7 @@ from spinn import util
 from spinn.data.boolean import load_boolean_data
 from spinn.data.sst import load_sst_data
 from spinn.data.snli import load_snli_data
+from spinn.data.arithmetic import load_simple_data
 from spinn.util.data import SimpleProgressBar
 from spinn.util.chainer_blocks import gradient_check
 
@@ -110,6 +111,8 @@ def run(only_forward=False):
         data_manager = load_sst_data
     elif FLAGS.data_type == "snli":
         data_manager = load_snli_data
+    elif FLAGS.data_type == "arithmetic":
+        data_manager = load_simple_data
     else:
         logger.Log("Bad data type.")
         return
@@ -146,7 +149,7 @@ def run(only_forward=False):
         initial_embeddings = util.LoadEmbeddingsFromASCII(
             vocabulary, FLAGS.word_embedding_dim, FLAGS.embedding_data_path)
     else:
-        initial_embeddings = None
+        initial_embeddings = np.random.randn(len(vocabulary), FLAGS.word_embedding_dim)
 
     # Trim dataset, convert token sequences to integer sequences, crop, and
     # pad.
@@ -159,6 +162,7 @@ def run(only_forward=False):
         training_data, FLAGS.batch_size, FLAGS.smart_batching, FLAGS.use_peano)
 
     eval_iterators = []
+    raw_eval_sets = []
     for filename, raw_eval_set in raw_eval_sets:
         logger.Log("Preprocessing eval data: " + filename)
         e_X, e_transitions, e_y, e_num_transitions = util.PreprocessDataset(
@@ -184,18 +188,25 @@ def run(only_forward=False):
     elif FLAGS.model_type == "SPINN":
         model_cls = spinn.fat_stack.SentencePairModel
         trainer_cls = spinn.fat_stack.SentencePairTrainer
+    elif FLAGS.model_type == "SingleSPINN":
+        model_cls = spinn.fat_stack.SentenceModel
+        trainer_cls = spinn.fat_stack.SentencePairTrainer
     else:
         raise Exception("Requested unimplemented model type %s" % FLAGS.model_type)
 
 
+    num_classes = len(data_manager.LABEL_MAP)
     if data_manager.SENTENCE_PAIR_DATA:
-        num_classes = len(data_manager.LABEL_MAP)
-        classifier_trainer = build_sentence_pair_model(model_cls, trainer_cls, 
+        classifier_trainer = build_sentence_pair_model(model_cls, trainer_cls,
                               FLAGS.model_dim, FLAGS.word_embedding_dim,
                               FLAGS.seq_length, num_classes, initial_embeddings,
                               FLAGS.embedding_keep_rate, FLAGS.gpu)
     else:
-        raise Exception("Single sentence model not implemented.")
+        # raise Exception("Single sentence model not implemented.")
+        classifier_trainer = build_sentence_pair_model(model_cls, trainer_cls,
+                              FLAGS.model_dim, FLAGS.word_embedding_dim,
+                              FLAGS.seq_length, num_classes, initial_embeddings,
+                              FLAGS.embedding_keep_rate, FLAGS.gpu)
 
     if ".ckpt" in FLAGS.ckpt_path:
         checkpoint_path = FLAGS.ckpt_path
@@ -222,7 +233,7 @@ def run(only_forward=False):
     else:
          # Train
         logger.Log("Training.")
-        
+
         classifier_trainer.init_optimizer(
             clip=FLAGS.clipping_max_value, decay=FLAGS.l2_lambda,
             lr=FLAGS.learning_rate,
@@ -273,9 +284,9 @@ def run(only_forward=False):
             if FLAGS.write_summaries:
                 train_summary_logger.log(step=step, loss=total_cost_val, accuracy=acc_val)
 
-            progress_bar.step(
-                i=max(0, step-1) % FLAGS.statistics_interval_steps + 1,
-                total=FLAGS.statistics_interval_steps)
+            # progress_bar.step(
+            #     i=max(0, step-1) % FLAGS.statistics_interval_steps + 1,
+            #     total=FLAGS.statistics_interval_steps)
 
             if step % FLAGS.statistics_interval_steps == 0:
                 progress_bar.finish()
@@ -311,7 +322,7 @@ if __name__ == '__main__':
     gflags.DEFINE_string("experiment_name", "experiment", "")
 
     # Data types.
-    gflags.DEFINE_enum("data_type", "bl", ["bl", "sst", "snli"],
+    gflags.DEFINE_enum("data_type", "bl", ["bl", "sst", "snli", "arithmetic"],
         "Which data handler and classifier to use.")
 
     # Where to store checkpoints
@@ -336,7 +347,7 @@ if __name__ == '__main__':
 
     # Model architecture settings.
     gflags.DEFINE_enum("model_type", "RNN",
-                       ["CBOW", "RNN", "SPINN", "NTI"],
+                       ["CBOW", "RNN", "SPINN", "NTI", "SingleSPINN"],
                        "")
     gflags.DEFINE_boolean("allow_gt_transitions_in_eval", False,
         "Whether to use ground truth transitions in evaluation when appropriate "

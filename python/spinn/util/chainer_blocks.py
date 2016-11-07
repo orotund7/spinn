@@ -56,6 +56,8 @@ class EmbedChain(Chain):
         self.vocab_size = vocab_size
         self.__gpu = gpu
         self.__mod = cuda.cupy if gpu >= 0 else np
+        if initial_embeddings is None:
+            initial_embeddings = np.random.randn(vocab_size, embedding_dim)
         self.raw_embeddings = self.__mod.array(initial_embeddings, dtype=self.__mod.float32)
 
     def check_type_forward(self, in_types):
