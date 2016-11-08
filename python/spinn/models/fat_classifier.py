@@ -241,6 +241,7 @@ def run(only_forward=False):
 
         # New Training Loop
         progress_bar = SimpleProgressBar(msg="Training", bar_length=60)
+        tr_acc_all = 0
         for step in range(step, FLAGS.training_steps):
             X_batch, transitions_batch, y_batch, num_transitions_batch = training_data_iter.next()
             learning_rate = FLAGS.learning_rate * (FLAGS.learning_rate_decay_per_10k_steps ** (step / 10000.0))
@@ -253,11 +254,11 @@ def run(only_forward=False):
                 "sentences": X_batch,
                 "transitions": transitions_batch,
                 }, y_batch, train=True, predict=False)
-            y, loss, preds = ret
+            y, loss, tr_acc = ret
 
             # Boilerplate for calculating loss.
             xent_cost_val = loss.data
-            transition_cost_val = 0.0
+            transition_cost_val = tr_acc
 
             total_cost_val = xent_cost_val + transition_cost_val
             loss.backward()
@@ -278,7 +279,7 @@ def run(only_forward=False):
                 pass
 
             # Accumulate accuracy for current interval.
-            action_acc_val = 0.0
+            tr_acc_all += tr_acc
             acc_val = float(classifier_trainer.model.accuracy.data)
 
             if FLAGS.write_summaries:
@@ -292,8 +293,9 @@ def run(only_forward=False):
                 progress_bar.finish()
                 logger.Log(
                     "Step: %i\tAcc: %f\t%f\tCost: %5f %5f %5f %s"
-                    % (step, acc_val, action_acc_val, total_cost_val, xent_cost_val, transition_cost_val,
+                    % (step, acc_val, tr_acc_all / FLAGS.statistics_interval_steps, total_cost_val, xent_cost_val, transition_cost_val,
                        "l2-not-exposed"))
+                tr_acc_all = 0
 
             if step > 0 and step % FLAGS.eval_interval_steps == 0:
                 for index, eval_set in enumerate(eval_iterators):
