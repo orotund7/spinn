@@ -56,6 +56,8 @@ class EmbedChain(Chain):
         self.vocab_size = vocab_size
         self.__gpu = gpu
         self.__mod = cuda.cupy if gpu >= 0 else np
+        if initial_embeddings is None:
+            initial_embeddings = np.random.randn(vocab_size, embedding_dim)
         self.raw_embeddings = self.__mod.array(initial_embeddings, dtype=self.__mod.float32)
 
     def check_type_forward(self, in_types):
@@ -233,7 +235,6 @@ class BaseSentencePairTrainer(object):
                  use_sentence_pair=False,
                  gpu=-1,
                  **kwargs):
-
         self.model_dim = model_dim
         self.word_embedding_dim = word_embedding_dim
         self.mlp_dim = mlp_dim
@@ -275,10 +276,12 @@ class BaseSentencePairTrainer(object):
         transitions = x_batch["transitions"]
 
         y, loss, class_acc, transition_acc = self.model(sentences, transitions, y_batch, train=train)
+
         if predict:
             preds = self.__mod.argmax(y.data, 1).tolist()
         else:
             preds = None
+
         return y, loss, class_acc, transition_acc
 
     def save(self, filename, step, best_dev_error):

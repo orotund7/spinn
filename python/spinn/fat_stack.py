@@ -288,7 +288,10 @@ class SPINN(Chain):
             self.add_link('tracking_input', TrackingInput(hidden_dim, tracking_lstm_hidden_dim))
             self.add_link('tracking_lstm', TrackingLSTM(hidden_dim, tracking_lstm_hidden_dim, make_logits=make_logits))
             self.transition_classifier = CrossEntropyClassifier(gpu)
-            self.transition_optimizer = optimizers.SGD(lr=0.0001)
+            self.optimizer_lr = 0.01
+            self.baseline = 0
+            self.mu = 0.1
+            self.transition_optimizer = optimizers.SGD(lr=self.optimizer_lr)
             self.transition_optimizer.setup(self.tracking_lstm)
 
     def check_type_forward(self, in_types):
@@ -305,6 +308,28 @@ class SPINN(Chain):
                                 volatile=not train)
         self.c = [zeros for _ in range(batch_size)]
         self.h = [zeros for _ in range(batch_size)]
+        self.memories = []
+
+
+    def reinforce(self, reward):
+        self.transition_optimizer.lr = self.optimizer_lr*(reward - self.baseline)
+        self.baseline = self.baseline*(1-self.mu)+self.mu*reward
+        c = None
+        h = None
+        transition_loss = 0
+        for memory in self.memories:
+            c_previous, h_previous, tracking_input, samples = memory
+            if c is None:
+                c = c_previous
+                h = h_previous
+            c, h, logits = self.tracking_lstm(c, h, tracking_input, True)
+            transition_loss += self.transition_classifier(logits, Variable(samples.astype('int32')))
+
+        self.tracking_lstm.cleargrads()
+        transition_loss.backward()
+        transition_loss.unchain_backward()
+        self.transition_optimizer.update()
+
 
     def reset_transitions(self):
         if self.make_logits:
@@ -335,15 +360,12 @@ class SPINN(Chain):
         # END: Type Check
 
         batch_size, seq_length, hidden_dim = buffers.shape[0], buffers.shape[1], buffers.shape[2]
-        transitions = transitions.T
-        assert len(transitions) == seq_length
 
         buffers = [F.split_axis(b, seq_length, axis=0, force_tuple=True)
                     for b in buffers]
         buffers_t = [0 for _ in buffers]
+        transition_accuracy = np.ones((batch_size), dtype='bool')
 
-        # Initialize stack with at least one item, otherwise gradient might
-        # not propogate.
         stacks = [[] for b in buffers]
 
         def pseudo_reduce(lefts, rights):
@@ -357,13 +379,7 @@ class SPINN(Chain):
             for state in lstm_state:
                 yield state
 
-
-        self.reset_transitions()
-
-        for ii, ts in enumerate(transitions):
-            assert len(ts) == batch_size
-            assert len(ts) == len(buffers)
-            assert len(ts) == len(stacks)
+        for timestep in range(seq_length):
 
             # TODO! The tracking inputs for shifts and reduces should be split,
             # in order to do consecutive shifts. This would (maybe) allow us
@@ -375,18 +391,24 @@ class SPINN(Chain):
                     c = F.concat(self.c, axis=0)
                     h = F.concat(self.h, axis=0)
 
+                    c_previous, h_previous = c, h
                     c, h, logits = self.tracking_lstm(c, h, tracking_input, train)
-                    if self.make_logits and np.any(ts != -1):
-                        _rpt = np.repeat(np.expand_dims(ts == -1, 1), 2, axis=1)
-                        try:
-                            selectedTransitions = F.where(Variable(_rpt), logits, Variable(np.zeros_like(logits.data)))
-                        except:
-                            import ipdb; ipdb.set_trace()
-                        transition_loss = self.transition_classifier(selectedTransitions, Variable(ts))
-                        transition_acc += np.sum(np.argmax(logits.data[ts != -1], axis=1) == ts[ts != -1])
-                        transition_num += np.sum(ts != -1)
-                        # print("Accuracy: ", np.sum(ts != -1), np.mean(np.argmax(logits.data[ts != -1], axis=1) == ts[ts != -1]))
-                        transition_loss.backward()
+
+                    probas = F.softmax(logits)
+                    samples = np.array([np.random.choice(2, 1, p=proba)[0] for proba in probas.data])
+
+                    # Cannot reduce on too small a stack
+                    _temp = np.array([len(stack) < 2 for stack in stacks])
+                    samples[_temp] = 0
+
+                    # Cannot shift if stack has to be reduced
+                    _temp = np.array([len(stacks[i])+buffers_t[i] >= seq_length for i in range(len(stacks))])
+                    samples[_temp] = 1
+
+                    transition_accuracy = np.logical_and(transition_accuracy, transitions[:,timestep] == samples)
+                    ts = samples
+                    if train:
+                        self.memories.append((c_previous, h_previous, tracking_input, samples))
 
                     # Assign appropriate states after they've been calculated.
                     self.c = F.split_axis(c, c.shape[0], axis=0, force_tuple=True)
@@ -422,6 +444,7 @@ class SPINN(Chain):
 
             lefts = []
             rights = []
+            # Looping over elements of the batch
             for i, (t, buf, stack) in enumerate(zip(ts, buffers, stacks)):
                 if t == -1: # skip
                     pass
@@ -461,13 +484,7 @@ class SPINN(Chain):
         self.update_transitions()
         assert ret.shape == (batch_size, hidden_dim)
 
-        if self.make_logits:
-            avg_transition_acc = transition_acc / transition_num
-        else:
-            avg_transition_acc = 0.0
-
-        # print("Avg tr acc:", transition_acc / transition_num)
-        return ret, avg_transition_acc
+        return ret, np.mean(transition_accuracy)
 
 
 class SentencePairModel(Chain):
@@ -563,3 +580,90 @@ class SentencePairModel(Chain):
         self.accuracy = self.accFun(y, self.__mod.array(y_batch))
 
         return y, accum_loss, self.accuracy.data, transition_acc
+
+
+class SentenceModel(Chain):
+    def __init__(self, model_dim, word_embedding_dim,
+                 seq_length, initial_embeddings, num_classes, mlp_dim,
+                 keep_rate,
+                 gpu=-1,
+                 tracking_lstm_hidden_dim=4,
+                 use_tracking_lstm=True,
+                 use_shift_composition=True,
+                 make_logits=False,
+                ):
+        super(SentenceModel, self).__init__(
+            projection=L.Linear(word_embedding_dim, model_dim, nobias=True),
+            x2h=SPINN(model_dim,
+                tracking_lstm_hidden_dim=tracking_lstm_hidden_dim,
+                use_tracking_lstm=use_tracking_lstm,
+                use_shift_composition=use_shift_composition,
+                make_logits=make_logits,
+                gpu=gpu, keep_rate=keep_rate),
+            # batch_norm_0=L.BatchNormalization(model_dim, model_dim),
+            # batch_norm_1=L.BatchNormalization(mlp_dim, mlp_dim),
+            # batch_norm_2=L.BatchNormalization(mlp_dim, mlp_dim),
+            l0=L.Linear(model_dim, 100),
+            l1=L.Linear(100, num_classes),
+            # l2=L.Linear(mlp_dim, num_classes)
+        )
+        self.classifier = CrossEntropyClassifier(gpu)
+        self.__gpu = gpu
+        self.__mod = cuda.cupy if gpu >= 0 else np
+        self.accFun = accuracy.accuracy
+        self.initial_embeddings = initial_embeddings
+        self.keep_rate = keep_rate
+        self.word_embedding_dim = word_embedding_dim
+        self.model_dim = model_dim
+
+    def __call__(self, sentences, transitions, y_batch=None, train=True):
+        ratio = 1 - self.keep_rate
+
+        # Get Embeddings
+
+        x = self.initial_embeddings.take(sentences, axis=0
+            ).astype(np.float32)
+        batch_size, seq_length = x.shape[0], x.shape[1]
+
+        if self.__gpu >= 0:
+            x = cuda.to_gpu(x)
+
+        x = Variable(x, volatile=not train)
+
+        batch_size, seq_length = x.shape[0], x.shape[1]
+
+        # x = F.dropout(x, ratio=ratio, train=train)
+        x = F.reshape(x, (batch_size * seq_length, self.word_embedding_dim))
+        x = self.projection(x)
+        x = F.reshape(x, (batch_size, seq_length, self.model_dim))
+
+        # Extract Transitions
+
+        # Pass through Sentence Encoders.
+        self.x2h.reset_state(batch_size, train)
+        h, tr_acc = self.x2h(x, transitions, train=train)
+
+        # Pass through Classifier.
+        # h = self.batch_norm_0(h, test=not train)
+        # h = F.dropout(h, ratio, train)
+        # h = F.relu(h)
+        h = self.l0(h)
+        # h = self.batch_norm_1(h, test=not train)
+        # h = F.dropout(h, ratio, train)
+        h = F.relu(h)
+        h = self.l1(h)
+        # h = self.batch_norm_2(h, test=not train)
+        # h = F.dropout(h, ratio, train)
+        # h = F.relu(h)
+        # h = self.l2(h)
+        y = h
+
+        # Calculate Loss & Accuracy.
+        # y = F.dropout(y, ratio, train)
+        # print(y_batch)
+        # print([y[i].data.argmax() for i in range(len(y_batch))])
+        accum_loss = self.classifier(y, Variable(y_batch, volatile=not train), train)
+        self.accuracy = self.accFun(y, self.__mod.array(y_batch))
+        self.x2h.reinforce(- accum_loss.data)
+        
+        return y, accum_loss, self.accuracy.data, tr_acc
