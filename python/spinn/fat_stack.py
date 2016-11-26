@@ -107,6 +107,10 @@ def arr_to_gpu(arr):
         return arr
 
 
+def is_train(var):
+    return var.volatile == False
+
+
 class LSTMState:
     """Class for intelligent LSTM state object.
 
@@ -453,9 +457,10 @@ class Tracker(Chain):
                 self.xp.zeros((self.batch_size, self.state_size),
                               dtype=lstm_in.data.dtype),
                 volatile='auto')
+        c_prev, h_prev = self.c, self.h
         self.c, self.h = F.lstm(self.c, lstm_in)
         if hasattr(self, 'transition'):
-            return self.transition(self.h)
+            return self.transition(self.h), c_prev, h_prev, lstm_in
         return None
 
     @property
@@ -472,7 +477,7 @@ class Tracker(Chain):
 class SPINN(Chain):
 
     def __init__(self, args, vocab, normalization=L.BatchNormalization,
-                 attention=False, attn_fn=None):
+                 attention=False, attn_fn=None, use_reinforce=True):
         super(SPINN, self).__init__(
             embed=Embed(args.size, vocab.size, args.embed_dropout,
                         vectors=vocab.vectors, normalization=normalization),
@@ -484,6 +489,14 @@ class SPINN(Chain):
         self.transition_weight = args.transition_weight
         self.use_history = args.use_history
         self.save_stack = args.save_stack
+        self.use_reinforce = use_reinforce
+
+        if use_reinforce:
+            self.optimizer_lr = 0.01
+            self.baseline = 0
+            self.mu = 0.1
+            self.transition_optimizer = optimizers.SGD(lr=self.optimizer_lr)
+            self.transition_optimizer.setup(self.tracker)
 
     def __call__(self, example, attention=None, print_transitions=False):
         self.bufs = self.embed(example.tokens)
@@ -502,6 +515,27 @@ class SPINN(Chain):
             self.transitions = example.transitions
         self.attention = attention
         return self.run(run_internal_parser=True)
+
+    def reset_state(self):
+        self.memories = []
+
+    def reinforce(self, reward):
+        self.transition_optimizer.lr = (self.optimizer_lr*(reward - self.baseline)).data
+        self.baseline = self.baseline*(1-self.mu)+self.mu*reward
+        transition_loss = 0.0
+        for memory in self.memories:
+            c_previous, h_previous, tracking_input, samples, probas, transitions = memory
+            target = Variable(samples.astype('int32'))
+            transition_loss += F.softmax_cross_entropy(probas, target,
+                                normalize=False)
+        transition_loss = transition_loss / len(self.memories)
+
+        self.tracker.cleargrads()
+        transition_loss.backward()
+        transition_loss.unchain_backward()
+        self.transition_optimizer.update()
+
+        return transition_loss
 
     def run(self, print_transitions=False, run_internal_parser=False,
             use_internal_parser=False):
@@ -528,20 +562,43 @@ class SPINN(Chain):
             #     transition_arr = [0]*len(self.bufs)
                 raise Exception('Running without transitions not implemented')
             if hasattr(self, 'tracker'):
-                transition_hyp = self.tracker(self.bufs, self.stacks)
+                transition_hyp, lstm_in, c_prev, h_prev = self.tracker(self.bufs, self.stacks)
                 transition_preds = transition_hyp.data.argmax(axis=1)
                 if transition_hyp is not None and run_internal_parser:
                     transition_hyp = to_cpu(transition_hyp)
                     if hasattr(self, 'transitions'):
-                        transition_loss += F.softmax_cross_entropy(
-                            transition_hyp, transitions,
-                            normalize=False)
-                        local_transition_acc = F.accuracy(
-                            transition_hyp, transitions)
-                        transition_acc += local_transition_acc
+                        if self.use_reinforce:
+                            probas = F.softmax(transition_hyp)
+                            samples = np.array([np.random.choice(3, 1, p=proba)[0] for proba in probas.data])
+                            
+                            validate_transitions = True
+                            if validate_transitions:
+                                # TODO: Almost definitely these don't work as expected because of how
+                                # things are initialized and because of the SKIP action.
+
+                                # Cannot reduce on too small a stack
+                                must_shift = np.array([len(stack) < 2 for stack in self.stacks])
+                                samples[must_shift] = 0
+
+                                # Cannot shift if stack has to be reduced
+                                must_reduce = np.array([len(buf) >= num_transitions for buf in self.bufs])
+                                samples[must_reduce] = 1
+
+                            local_transition_acc = F.accuracy(
+                                probas, transitions)
+                            transition_acc += local_transition_acc
+
+                            if is_train(transition_hyp):
+                                self.memories.append((c_prev, h_prev, lstm_in, samples, probas, transitions))
+                        else:
+                            transition_loss += F.softmax_cross_entropy(
+                                transition_hyp, transitions,
+                                normalize=False)
+                            local_transition_acc = F.accuracy(
+                                transition_hyp, transitions)
+                            transition_acc += local_transition_acc
                     if use_internal_parser:
-                        transition_arr = [[0, 1, -1][x] for x in
-                                          transition_preds.tolist()]
+                        transition_arr = transition_preds.tolist()
 
             lefts, rights, trackings, attentions = [], [], [], []
             batch = zip(transition_arr, self.bufs, self.stacks, self.history,
@@ -601,6 +658,9 @@ class SPINN(Chain):
             transition_loss *= self.transition_weight
         else:
             transition_loss = None
+
+        if self.use_reinforce:
+            reporter.report({'transition_accuracy': transition_acc / num_transitions}, self)
 
         return [stack.pop() for stack in self.stacks], transition_loss
 
@@ -726,6 +786,7 @@ class SentenceModel(Chain):
                  make_logits=False,
                  use_history=False,
                  save_stack=False,
+                 use_reinforce=False,
                  **kwargs
                 ):
         super(SentenceModel, self).__init__(
@@ -744,6 +805,7 @@ class SentenceModel(Chain):
         self.keep_rate = keep_rate
         self.word_embedding_dim = word_embedding_dim
         self.model_dim = model_dim
+        self.use_reinforce = use_reinforce
 
         tracker_size = tracking_lstm_hidden_dim if use_tracking_lstm else None
 
@@ -764,7 +826,7 @@ class SentenceModel(Chain):
         vocab = argparse.Namespace(**vocab)
 
         self.add_link('spinn', SPINN(args, vocab, normalization=L.BatchNormalization,
-                 attention=False, attn_fn=None))
+                 attention=False, attn_fn=None, use_reinforce=use_reinforce))
 
     def __call__(self, sentences, transitions, y_batch=None, train=True):
         batch_size = sentences.shape[0]
@@ -786,6 +848,8 @@ class SentenceModel(Chain):
         r.add_observer('spinn', self.spinn)
         observation = {}
         with r.scope(observation):
+            if self.use_reinforce:
+                self.spinn.reset_state()
             h, _ = self.spinn(example)
         transition_acc = observation.get('spinn/transition_accuracy', 0.0)
         transition_loss = observation.get('spinn/transition_loss', None)

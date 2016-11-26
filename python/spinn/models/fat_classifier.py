@@ -59,6 +59,7 @@ def build_sentence_pair_model(model_cls, trainer_cls, vocab_size, model_dim, wor
              make_logits=FLAGS.make_logits,
              use_history=FLAGS.use_history,
              save_stack=FLAGS.save_stack,
+             use_reinforce=FLAGS.use_reinforce,
             )
 
     classifier_trainer = trainer_cls(model, model_dim, word_embedding_dim,
@@ -72,6 +73,12 @@ def build_sentence_pair_model(model_cls, trainer_cls, vocab_size, model_dim, wor
         )
 
     return classifier_trainer
+
+
+def build_rewards(logits, y):
+    import chainer.functions as F
+
+    return F.accuracy(logits, y) - 0.5
 
 
 def evaluate(classifier_trainer, eval_set, logger, step):
@@ -264,6 +271,9 @@ def run(only_forward=False):
                 }, y_batch, train=True, predict=False)
             y, xent_loss, class_acc, transition_acc, transition_loss = ret
 
+            if FLAGS.use_reinforce:
+                rewards = build_rewards(y, y_batch)
+
             # Boilerplate for calculating loss.
             xent_cost_val = xent_loss.data
             transition_cost_val = transition_loss.data if transition_loss is not None else 0.0
@@ -281,14 +291,15 @@ def run(only_forward=False):
             # Accumulate Total Loss Data
             total_cost_val = 0.0
             total_cost_val += xent_cost_val
-            total_cost_val += transition_cost_val
             total_cost_val += l2_cost_val
+            if not FLAGS.use_reinforce:
+                total_cost_val += transition_cost_val
 
             # Accumulate Total Loss Variable
             total_loss = 0.0
             total_loss += xent_loss
             total_loss += l2_loss
-            if hasattr(transition_loss, 'backward'):
+            if hasattr(transition_loss, 'backward') and not FLAGS.use_reinforce:
                 total_loss += transition_loss
 
             total_loss.backward()
@@ -307,6 +318,10 @@ def run(only_forward=False):
             except:
                 import ipdb; ipdb.set_trace()
                 pass
+
+            if FLAGS.use_reinforce:
+                transition_loss = model.spinn.reinforce(rewards)
+                transition_cost_val = transition_loss.data
 
             # Accumulate accuracy for current interval.
             action_acc_val = 0.0
@@ -397,6 +412,7 @@ if __name__ == '__main__':
 
     gflags.DEFINE_float("transition_weight", None, "")
     gflags.DEFINE_integer("tracking_lstm_hidden_dim", 4, "")
+    gflags.DEFINE_boolean("use_reinforce", False, "Use RL to provide tracking lstm gradients")
     gflags.DEFINE_boolean("use_shift_composition", True, "")
     gflags.DEFINE_boolean("use_history", False, "")
     gflags.DEFINE_boolean("save_stack", False, "")
