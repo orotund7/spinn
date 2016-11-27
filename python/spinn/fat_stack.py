@@ -443,9 +443,11 @@ class Tracker(Chain):
 
     def __call__(self, bufs, stacks):
         self.batch_size = len(bufs)
+        zeros = Variable(np.zeros(bufs[0][0].shape, dtype=bufs[0][0].data.dtype),
+                         volatile='auto')
         buf = bundle(buf[-1] for buf in bufs)
-        stack1 = bundle(stack[-1] for stack in stacks)
-        stack2 = bundle(stack[-2] for stack in stacks)
+        stack1 = bundle(stack[-1] if len(stack) > 0 else zeros for stack in stacks)
+        stack2 = bundle(stack[-2] if len(stack) > 1 else zeros for stack in stacks)
 
         lstm_in = self.buf(buf.h)
         lstm_in += self.stack1(stack1.h)
@@ -457,10 +459,9 @@ class Tracker(Chain):
                 self.xp.zeros((self.batch_size, self.state_size),
                               dtype=lstm_in.data.dtype),
                 volatile='auto')
-        c_prev, h_prev = self.c, self.h
         self.c, self.h = F.lstm(self.c, lstm_in)
         if hasattr(self, 'transition'):
-            return self.transition(self.h), c_prev, h_prev, lstm_in
+            return self.transition(self.h)
         return None
 
     @property
@@ -516,19 +517,9 @@ class SPINN(Chain):
         self.attention = attention
         return self.run(run_internal_parser=True)
 
-    def reset_state(self):
-        self.memories = []
-
-    def reinforce(self, reward):
+    def reinforce(self, reward, transition_loss):
         self.transition_optimizer.lr = (self.optimizer_lr*(reward - self.baseline)).data
         self.baseline = self.baseline*(1-self.mu)+self.mu*reward
-        transition_loss = 0.0
-        for memory in self.memories:
-            c_previous, h_previous, tracking_input, samples, probas, transitions = memory
-            target = Variable(samples.astype('int32'))
-            transition_loss += F.softmax_cross_entropy(probas, target,
-                                normalize=False)
-        transition_loss = transition_loss / len(self.memories)
 
         self.tracker.cleargrads()
         transition_loss.backward()
@@ -562,7 +553,7 @@ class SPINN(Chain):
             #     transition_arr = [0]*len(self.bufs)
                 raise Exception('Running without transitions not implemented')
             if hasattr(self, 'tracker'):
-                transition_hyp, lstm_in, c_prev, h_prev = self.tracker(self.bufs, self.stacks)
+                transition_hyp = self.tracker(self.bufs, self.stacks)
                 transition_preds = transition_hyp.data.argmax(axis=1)
                 if transition_hyp is not None and run_internal_parser:
                     transition_hyp = to_cpu(transition_hyp)
@@ -587,9 +578,10 @@ class SPINN(Chain):
                             local_transition_acc = F.accuracy(
                                 probas, transitions)
                             transition_acc += local_transition_acc
-
-                            if is_train(transition_hyp):
-                                self.memories.append((c_prev, h_prev, lstm_in, samples, probas, transitions))
+                            transition_loss += F.softmax_cross_entropy(
+                                probas, samples.astype('int32'),
+                                normalize=False)
+                            
                         else:
                             transition_loss += F.softmax_cross_entropy(
                                 transition_hyp, transitions,
@@ -658,9 +650,6 @@ class SPINN(Chain):
             transition_loss *= self.transition_weight
         else:
             transition_loss = None
-
-        if self.use_reinforce:
-            reporter.report({'transition_accuracy': transition_acc / num_transitions}, self)
 
         return [stack.pop() for stack in self.stacks], transition_loss
 
@@ -746,8 +735,6 @@ class SentencePairModel(Chain):
         r.add_observer('spinn', self.spinn)
         observation = {}
         with r.scope(observation):
-            if self.use_reinforce:
-                self.spinn.reset_state()
             h_both, _ = self.spinn(example)
         transition_acc = observation.get('spinn/transition_accuracy', 0.0)
         transition_loss = observation.get('spinn/transition_loss', None)
@@ -849,8 +836,6 @@ class SentenceModel(Chain):
         r.add_observer('spinn', self.spinn)
         observation = {}
         with r.scope(observation):
-            if self.use_reinforce:
-                self.spinn.reset_state()
             h, _ = self.spinn(example)
         transition_acc = observation.get('spinn/transition_accuracy', 0.0)
         transition_loss = observation.get('spinn/transition_loss', None)
