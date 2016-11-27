@@ -677,12 +677,10 @@ class SentencePairModel(Chain):
                  make_logits=False,
                  use_history=False,
                  save_stack=False,
+                 use_reinforce=False,
                  **kwargs
                 ):
         super(SentencePairModel, self).__init__(
-            # batch_norm_0=L.BatchNormalization(model_dim*2, model_dim*2),
-            # batch_norm_1=L.BatchNormalization(mlp_dim, mlp_dim),
-            # batch_norm_2=L.BatchNormalization(mlp_dim, mlp_dim),
             l0=L.Linear(model_dim*2, mlp_dim),
             l1=L.Linear(mlp_dim, mlp_dim),
             l2=L.Linear(mlp_dim, num_classes)
@@ -698,6 +696,7 @@ class SentencePairModel(Chain):
         self.keep_rate = keep_rate
         self.word_embedding_dim = word_embedding_dim
         self.model_dim = model_dim
+        self.use_reinforce = use_reinforce
 
         tracker_size = tracking_lstm_hidden_dim if use_tracking_lstm else None
 
@@ -718,7 +717,7 @@ class SentencePairModel(Chain):
         vocab = argparse.Namespace(**vocab)
 
         self.add_link('spinn', SPINN(args, vocab, normalization=L.BatchNormalization,
-                 attention=False, attn_fn=None))
+                 attention=False, attn_fn=None, use_reinforce=use_reinforce))
 
     def __call__(self, sentences, transitions, y_batch=None, train=True):
         batch_size = sentences.shape[0]
@@ -747,6 +746,8 @@ class SentencePairModel(Chain):
         r.add_observer('spinn', self.spinn)
         observation = {}
         with r.scope(observation):
+            if self.use_reinforce:
+                self.spinn.reset_state()
             h_both, _ = self.spinn(example)
         transition_acc = observation.get('spinn/transition_accuracy', 0.0)
         transition_loss = observation.get('spinn/transition_loss', None)
