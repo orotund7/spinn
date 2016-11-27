@@ -23,6 +23,28 @@ def convert_binary_bracketing(parse):
                 transitions.append(0)
     return tokens, transitions
 
+def convert_parse(parse):
+    transitions = []
+    tokens = []
+    tag_stack = []
+    tags = []
+    parse = parse.replace('(', '( ')
+    parse = parse.replace(')', ' )')
+    for word in parse.split(' '):
+        if word[0] != "(":
+            if word[0] == ")":
+                transitions.append(1)
+                tags.append(tag_stack.pop())
+            elif prev == "(":
+                tag_stack.append(word)
+            else:
+                # Downcase all words to match GloVe.
+                tokens.append(word.lower())
+                transitions.append(0)
+        prev = word
+    import ipdb; ipdb.set_trace()
+    return tokens, transitions
+
 def load_data(path):
     print "Loading", path
     examples = []
@@ -39,10 +61,11 @@ def load_data(path):
             (example["premise_tokens"], example["premise_transitions"]) = convert_binary_bracketing(loaded_example["sentence1_binary_parse"])
             (example["hypothesis_tokens"], example["hypothesis_transitions"]) = convert_binary_bracketing(loaded_example["sentence2_binary_parse"])
             examples.append(example)
+            convert_parse(loaded_example["sentence1_parse"])
     return examples, None
 
 
 if __name__ == "__main__":
     # Demo:
-    examples = load_data('snli-data/snli_1.0_dev.jsonl')
+    examples = load_data('snli_1.0/snli_1.0_dev.jsonl')
     print examples[0]
