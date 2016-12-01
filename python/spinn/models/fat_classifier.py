@@ -84,7 +84,7 @@ def build_sentence_pair_model(model_cls, trainer_cls, vocab_size, model_dim, wor
 
 
 def build_rewards(logits, y):
-    return F.accuracy(logits, y) - 0.5
+    return metrics.accuracy_score(logits.data.argmax(axis=1), y) - 0.5
 
 
 def hamming_distance(s1, s2):
@@ -168,8 +168,13 @@ def evaluate(classifier_trainer, eval_set, logger, step,
 
 
 def reinforce(optimizer, lr, baseline, mu, reward, transition_loss):
-    new_lr = (lr*(reward - baseline)).data
+    new_lr = (lr*(reward - baseline))
     baseline = baseline*(1-mu)+mu*reward
+
+    transition_loss.backward()
+    transition_loss.unchain_backward()
+    optimizer.lr = new_lr
+    optimizer.update()
 
     return new_lr, baseline
 
@@ -392,9 +397,6 @@ def run(only_forward=False):
 
                 transition_optimizer.zero_grads()
                 optimizer_lr, baseline = reinforce(transition_optimizer, optimizer_lr, baseline, mu, rewards, transition_loss)
-                transition_loss.backward()
-                # transition_loss.unchain_backward()
-                transition_optimizer.update()
 
             # Accumulate accuracy for current interval.
             acc_val = float(classifier_trainer.model.accuracy.data)
