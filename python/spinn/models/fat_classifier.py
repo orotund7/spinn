@@ -26,6 +26,7 @@ import sys
 import time
 from collections import deque
 
+import gc
 import gflags
 import numpy as np
 
@@ -432,6 +433,7 @@ def run(only_forward=False):
                 accum_class_acc.clear()
                 accum_preds.clear()
                 accum_truth.clear()
+                gc.collect()
 
             if step > 0 and step % FLAGS.eval_interval_steps == 0:
                 for index, eval_set in enumerate(eval_iterators):
