@@ -132,10 +132,9 @@ def evaluate(classifier_trainer, eval_set, logger, step,
         action_acc_accum += action_acc_value
         eval_batches += 1.0
 
-        memories = classifier_trainer.model.spinn.memories
-        all_preds = [el['preds'] for el in memories]
-
         if FLAGS.print_tree:
+            memories = classifier_trainer.model.spinn.memories
+            all_preds = [el['preds'] for el in memories]
             for ii in range(len(eval_X_batch)):
                 print(i, ii)
                 sentence = eval_X_batch[ii]
@@ -345,12 +344,6 @@ def run(only_forward=False):
                 }, y_batch, train=True, predict=False, validate_transitions=FLAGS.validate_transitions)
             y, xent_loss, class_acc, transition_acc, transition_loss = ret
 
-            # Accumulate stats for confusion matrix.
-            preds = [m["preds_cm"] for m in model.spinn.memories]
-            truth = [m["truth_cm"] for m in model.spinn.memories]
-            accum_preds.append(preds)
-            accum_truth.append(truth)
-
             if FLAGS.use_reinforce:
                 rewards = build_rewards(y, y_batch)
 
@@ -416,9 +409,7 @@ def run(only_forward=False):
             if step % FLAGS.statistics_interval_steps == 0:
                 progress_bar.finish()
                 avg_class_acc = np.array(accum_class_acc).mean()
-                all_preds = flatten(accum_preds)
-                all_truth = flatten(accum_truth)
-                avg_trans_acc = metrics.accuracy_score(all_preds, all_truth)
+                avg_trans_acc = 0.0
                 logger.Log(
                     "Step: %i\tAcc: %f\t%f\tCost: %5f %5f %5f %5f"
                     % (step, avg_class_acc, avg_trans_acc, total_cost_val, xent_loss.data, transition_cost_val, l2_loss.data))
