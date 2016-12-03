@@ -277,6 +277,8 @@ class SPINN(Chain):
                         memory["preds"]  = transition_preds
 
                         if not self.use_skips:
+                            raise Exception("Skipping skips not implemented robustly.")
+
                             hyp_acc = hyp_acc.data[cant_skip]
                             truth_acc = truth_acc[cant_skip]
 
@@ -285,13 +287,22 @@ class SPINN(Chain):
                             hyp_xent = F.concat([hyp_xent[i] for i, y in enumerate(cant_skip) if y], axis=0)
                             truth_xent = truth_xent[cant_skip]
 
+                            memory["preds_cm"] = np.array(transition_preds[cant_skip])
+                            memory["truth_cm"] = np.array(transitions[cant_skip])
+                        else:
+                            memory["preds_cm"] = np.array(transition_preds[cant_skip])
+                            memory["truth_cm"] = np.array(transitions[cant_skip])
+
                         memory["hyp_acc"] = hyp_acc
                         memory["truth_acc"] = truth_acc
                         memory["hyp_xent"] = hyp_xent
                         memory["truth_xent"] = truth_xent
 
-                        memory["preds_cm"] = np.array(transition_preds[cant_skip])
-                        memory["truth_cm"] = np.array(transitions[cant_skip])
+                        transition_acc += F.accuracy(
+                            hyp_acc, truth_acc.astype(np.int32))
+                        transition_loss += F.softmax_cross_entropy(
+                            hyp_xent, truth_xent.astype(np.int32),
+                            normalize=False)
 
                         if use_internal_parser:
                             transition_arr = transition_preds.tolist()
@@ -349,28 +360,8 @@ class SPINN(Chain):
         if print_transitions:
             print()
         if self.transition_weight is not None:
-            # We compute statistics after the fact, since sub-batches can
-            # have different sizes when not using skips.
-            statistics = zip(*[
-                (m["hyp_acc"], m["truth_acc"], m["hyp_xent"], m["truth_xent"])
-                for m in self.memories])
-
-            statistics = [
-                F.squeeze(F.concat([F.expand_dims(ss, 1) for ss in s], axis=0))
-                if isinstance(s[0], Variable) else
-                np.array(reduce(lambda x, y: x + y.tolist(), s, []))
-                for s in statistics]
-
-            hyp_acc, truth_acc, hyp_xent, truth_xent = statistics
-
-            transition_acc = F.accuracy(
-                hyp_acc, truth_acc.astype(np.int32))
-            transition_loss = F.softmax_cross_entropy(
-                hyp_xent, truth_xent.astype(np.int32),
-                normalize=False)
-
-            reporter.report({'transition_accuracy': transition_acc,
-                             'transition_loss': transition_loss}, self)
+            reporter.report({'transition_accuracy': transition_acc / num_transitions,
+                             'transition_loss': transition_loss / num_transitions}, self)
             transition_loss *= self.transition_weight
         else:
             transition_loss = None

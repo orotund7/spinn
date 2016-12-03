@@ -343,8 +343,7 @@ def run(only_forward=False):
         # New Training Loop
         progress_bar = SimpleProgressBar(msg="Training", bar_length=60, enabled=FLAGS.show_progress_bar)
         accum_class_acc = deque(maxlen=FLAGS.deq_length)
-        accum_preds = deque(maxlen=FLAGS.deq_length)
-        accum_truth = deque(maxlen=FLAGS.deq_length)
+        accum_trans_acc = deque(maxlen=FLAGS.deq_length)
         for step in range(step, FLAGS.training_steps):
             X_batch, transitions_batch, y_batch, _ = training_data_iter.next()
 
@@ -358,11 +357,15 @@ def run(only_forward=False):
                 }, y_batch, train=True, predict=False, validate_transitions=FLAGS.validate_transitions)
             y, xent_loss, class_acc, transition_acc, transition_loss = ret
 
+            accum_class_acc.append(class_acc)
+            accum_trans_acc.append(transition_acc)
+
             # Accumulate stats for confusion matrix.
-            preds = [m["preds_cm"] for m in model.spinn.memories]
-            truth = [m["truth_cm"] for m in model.spinn.memories]
-            accum_preds.append(preds)
-            accum_truth.append(truth)
+            if FLAGS.print_confusion_matrix:
+                preds = [m["preds_cm"] for m in model.spinn.memories]
+                truth = [m["truth_cm"] for m in model.spinn.memories]
+                accum_preds.append(preds)
+                accum_truth.append(truth)
 
             if FLAGS.use_reinforce:
                 rewards = build_rewards(y, y_batch)
@@ -370,7 +373,6 @@ def run(only_forward=False):
 
             # Boilerplate for calculating loss.
             transition_cost_val = transition_loss.data if transition_loss is not None else 0.0
-            accum_class_acc.append(class_acc)
 
             # Extract L2 Cost
             l2_loss = l2_cost(model, FLAGS.l2_lambda)
@@ -425,9 +427,7 @@ def run(only_forward=False):
             if step % FLAGS.statistics_interval_steps == 0:
                 progress_bar.finish()
                 avg_class_acc = np.array(accum_class_acc).mean()
-                all_preds = flatten(accum_preds)
-                all_truth = flatten(accum_truth)
-                avg_trans_acc = metrics.accuracy_score(all_preds, all_truth)
+                avg_trans_acc = np.array(accum_trans_acc).mean()
                 logger.Log(
                     "Step: %i\tAcc: %f\t%f\tCost: %5f %5f %5f %5f"
                     % (step, avg_class_acc, avg_trans_acc, total_cost_val, xent_loss.data, transition_cost_val, l2_loss.data))
@@ -440,8 +440,7 @@ def run(only_forward=False):
                     cm = cm.astype(np.float32) / cm.sum(axis=1)[:, np.newaxis]
                     logger.Log("{}".format(cm))
                 accum_class_acc.clear()
-                accum_preds.clear()
-                accum_truth.clear()
+                accum_trans_acc.clear()
 
             if step > 0 and step % FLAGS.eval_interval_steps == 0:
                 for index, eval_set in enumerate(eval_iterators):
@@ -493,7 +492,7 @@ if __name__ == '__main__':
         "using ':' tokens. The first file should be the dev set, and is used for determining "
         "when to save the early stopping 'best' checkpoints.")
     gflags.DEFINE_integer("ckpt_step", 1000, "Steps to run before considering saving checkpoint.")
-    gflags.DEFINE_integer("deq_length", 10, "Max trailing examples to use for statistics.")
+    gflags.DEFINE_integer("deq_length", 100, "Max trailing examples to use for statistics.")
     gflags.DEFINE_integer("seq_length", 30, "")
     gflags.DEFINE_integer("eval_seq_length", 30, "")
     gflags.DEFINE_boolean("smart_batching", True, "Organize batches using sequence length.")
@@ -523,21 +522,21 @@ if __name__ == '__main__':
 
     gflags.DEFINE_boolean("use_shift_composition", True, "")
     gflags.DEFINE_boolean("use_history", False, "")
-    gflags.DEFINE_boolean("use_skips", False, "Pad transitions with SKIP actions.")
-    gflags.DEFINE_boolean("use_left_padding", True, "Pad transitions only on the RHS.")
-    gflags.DEFINE_boolean("validate_transitions", True, "Constrain predicted transitions to ones"
+    gflags.DEFINE_boolean("use_skips", True, "Pad transitions with SKIP actions.")
+    gflags.DEFINE_boolean("use_left_padding", False, "If False, pad transitions only on the RHS.")
+    gflags.DEFINE_boolean("validate_transitions", False, "Constrain predicted transitions to ones"
                                                         "that give a valid parse tree.")
     gflags.DEFINE_boolean("save_stack", False, "")
     gflags.DEFINE_boolean("use_tracking_lstm", True,
                           "Whether to use LSTM in the tracking unit")
-    gflags.DEFINE_float("semantic_classifier_keep_rate", 0.9,
+    gflags.DEFINE_float("semantic_classifier_keep_rate", 1.0,
         "Used for dropout in the semantic task classifier.")
-    gflags.DEFINE_float("embedding_keep_rate", 0.9,
+    gflags.DEFINE_float("embedding_keep_rate", 1.0,
         "Used for dropout on transformed embeddings.")
     gflags.DEFINE_boolean("use_input_dropout", False, "")
     gflags.DEFINE_boolean("use_input_norm", False, "")
-    gflags.DEFINE_boolean("use_tracker_dropout", True, "")
-    gflags.DEFINE_boolean("use_classifier_norm", True, "")
+    gflags.DEFINE_boolean("use_tracker_dropout", False, "")
+    gflags.DEFINE_boolean("use_classifier_norm", False, "")
     gflags.DEFINE_float("tracker_dropout_rate", 0.1, "")
     gflags.DEFINE_boolean("lstm_composition", True, "")
 
