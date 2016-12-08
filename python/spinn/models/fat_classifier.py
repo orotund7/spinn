@@ -75,7 +75,7 @@ def build_model_args(initial_embeddings, use_sentence_pair, mlp_dim, vocab_size,
     model_args.model_dim                = FLAGS.model_dim
     model_args.word_embedding_dim       = FLAGS.word_embedding_dim
     model_args.seq_length               = FLAGS.seq_length
-    model_args.input_keep_rate          = FLAGS.embedding_keep_rate
+    model_args.input_dropout_rate       = FLAGS.input_dropout_rate
     model_args.classifier_keep_rate     = FLAGS.semantic_classifier_keep_rate
     model_args.use_input_dropout        = FLAGS.use_input_dropout
     model_args.use_input_norm           = FLAGS.use_input_norm
@@ -98,6 +98,12 @@ def build_model_args(initial_embeddings, use_sentence_pair, mlp_dim, vocab_size,
     model_args.initial_embeddings       = initial_embeddings
     model_args.num_classes              = num_classes
     model_args.mlp_dim                  = mlp_dim
+
+    if FLAGS.projection_dim <= 0 or not FLAGS.use_encode:
+        model_args.projection_dim = FLAGS.model_dim/2
+    else:
+        model_args.projection_dim = FLAGS.projection_dim
+    model_args.tracker_size = FLAGS.tracking_lstm_hidden_dim if FLAGS.use_tracking_lstm else None
 
     return model_args
 
@@ -582,7 +588,7 @@ if __name__ == '__main__':
                           "Whether to use LSTM in the tracking unit")
     gflags.DEFINE_float("semantic_classifier_keep_rate", 0.9,
         "Used for dropout in the semantic task classifier.")
-    gflags.DEFINE_float("embedding_keep_rate", 0.9,
+    gflags.DEFINE_float("input_dropout_rate", 0.1,
         "Used for dropout on transformed embeddings.")
     gflags.DEFINE_boolean("use_input_dropout", False, "")
     gflags.DEFINE_boolean("use_random", False, "When predicting parse, rather than logits,"

@@ -151,13 +151,13 @@ class Tracker(Chain):
 
 class SPINN(Chain):
 
-    def __init__(self, args, vocab, normalization=L.BatchNormalization,
+    def __init__(self, args, normalization=L.BatchNormalization,
                  attention=False, attn_fn=None, use_reinforce=True, use_skips=False):
         super(SPINN, self).__init__(
-            reduce=Reduce(args.size, args.tracker_size, attention, attn_fn))
+            reduce=Reduce(args.projection_dim, args.tracker_size, attention, attn_fn))
         if args.tracker_size is not None:
             self.add_link('tracker', Tracker(
-                args.size, args.tracker_size,
+                args.projection_dim, args.tracker_size,
                 predict=args.transition_weight is not None,
                 use_tracker_dropout=args.use_tracker_dropout,
                 tracker_dropout_rate=args.tracker_dropout_rate, use_skips=use_skips))
@@ -456,45 +456,24 @@ class BaseModel(Chain):
         self.add_link('l1', L.Linear(mlp_dim, mlp_dim))
         self.add_link('l2', L.Linear(mlp_dim, num_classes))
 
-        projection_dim = model_args.projection_dim
-        if projection_dim <= 0 or not self.use_encode:
-            projection_dim = model_dim/2
-
-        args = {
-            'size': projection_dim,
-            'tracker_size': model_args.tracking_lstm_hidden_dim if model_args.use_tracking_lstm else None,
-            'transition_weight': model_args.transition_weight,
-            'use_history': model_args.use_history,
-            'save_stack': model_args.save_stack,
-            'input_dropout_rate': 1. - model_args.input_keep_rate,
-            'use_input_dropout': model_args.use_input_dropout,
-            'use_input_norm': model_args.use_input_norm,
-            'use_tracker_dropout': model_args.use_tracker_dropout,
-            'tracker_dropout_rate': model_args.tracker_dropout_rate,
-        }
-        args = argparse.Namespace(**args)
-
-        vocab = {
-            'size': initial_embeddings.shape[0] if initial_embeddings is not None else model_args.vocab_size,
-            'vectors': initial_embeddings,
-        }
-        vocab = argparse.Namespace(**vocab)
+        tracker_size = model_args.tracking_lstm_hidden_dim if model_args.use_tracking_lstm else None,
 
         self.add_link('embed', 
-                    Embed(args.size, vocab.size, args.input_dropout_rate,
-                        vectors=vocab.vectors, normalization=L.BatchNormalization,
-                        use_input_dropout=args.use_input_dropout,
-                        use_input_norm=args.use_input_norm,
+                    Embed(model_args.projection_dim, model_args.vocab_size, model_args.input_dropout_rate,
+                        vectors=model_args.initial_embeddings,
+                        normalization=L.BatchNormalization,
+                        use_input_dropout=model_args.use_input_dropout,
+                        use_input_norm=model_args.use_input_norm,
                         ))
 
-        self.add_link('spinn', SPINN(args, vocab, normalization=L.BatchNormalization,
+        self.add_link('spinn', SPINN(model_args, normalization=L.BatchNormalization,
                  attention=False, attn_fn=None, use_reinforce=model_args.use_reinforce, use_skips=model_args.use_skips))
 
         if self.use_encode:
             # TODO: Could probably have a buffer that is [concat(embed, fwd, bwd)] rather
             # than just [concat(fwd, bwd)]. More generally, [concat(embed, activation(embed))].
-            self.add_link('fwd_rnn', LSTMChain(input_dim=args.size * 2, hidden_dim=model_dim/2, seq_length=seq_length))
-            self.add_link('bwd_rnn', LSTMChain(input_dim=args.size * 2, hidden_dim=model_dim/2, seq_length=seq_length))
+            self.add_link('fwd_rnn', LSTMChain(input_dim=model_args.projection_dim * 2, hidden_dim=model_dim/2, seq_length=seq_length))
+            self.add_link('bwd_rnn', LSTMChain(input_dim=model_args.projection_dim * 2, hidden_dim=model_dim/2, seq_length=seq_length))
 
 
     def build_example(self, sentences, transitions, train):
