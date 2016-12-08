@@ -431,38 +431,21 @@ class BaseModel(Chain):
         # Extract args
         
         self.args = args
-        gpu = args.gpu
-        use_sentence_pair = args.use_sentence_pair
-        model_dim = args.model_dim
-        mlp_dim = args.mlp_dim
-        num_classes = args.num_classes
-        seq_length = args.seq_length
-        mlp_input_dim = model_dim * 2 if use_sentence_pair else model_dim
-        self.classifier = CrossEntropyClassifier(gpu)
-        self.__gpu = gpu
-        self.__mod = cuda.cupy if gpu >= 0 else np
+        mlp_input_dim = args.model_dim * 2 if args.use_sentence_pair else args.model_dim
+        
+        self.classifier = CrossEntropyClassifier(args.gpu)
+        self.__mod = cuda.cupy if args.gpu >= 0 else np
         self.accFun = accuracy.accuracy
         
-        self.initial_embeddings = temp_args.initial_embeddings
-        
-        self.classifier_dropout_rate = 1. - args.classifier_keep_rate
-        self.use_classifier_norm = args.use_classifier_norm
-        self.word_embedding_dim = args.word_embedding_dim
-        self.model_dim = model_dim
-        self.use_reinforce = args.use_reinforce
-        self.use_encode = args.use_encode
-        
-        the_gpu.gpu = gpu
+        the_gpu.gpu = args.gpu
 
-        self.add_link('l0', L.Linear(mlp_input_dim, mlp_dim))
-        self.add_link('l1', L.Linear(mlp_dim, mlp_dim))
-        self.add_link('l2', L.Linear(mlp_dim, num_classes))
-
-        tracker_size = args.tracking_lstm_hidden_dim if args.use_tracking_lstm else None,
+        self.add_link('l0', L.Linear(mlp_input_dim, args.mlp_dim))
+        self.add_link('l1', L.Linear(args.mlp_dim, args.mlp_dim))
+        self.add_link('l2', L.Linear(args.mlp_dim, args.num_classes))
 
         self.add_link('embed', 
                     Embed(args.projection_dim, args.vocab_size, args.input_dropout_rate,
-                        vectors=self.initial_embeddings,
+                        vectors=temp_args.initial_embeddings,
                         use_input_dropout=args.use_input_dropout,
                         use_input_norm=args.use_input_norm,
                         ))
@@ -470,11 +453,11 @@ class BaseModel(Chain):
         self.add_link('spinn', SPINN(args,
                  attention=False, attn_fn=None, use_reinforce=args.use_reinforce, use_skips=args.use_skips))
 
-        if self.use_encode:
+        if args.use_encode:
             # TODO: Could probably have a buffer that is [concat(embed, fwd, bwd)] rather
             # than just [concat(fwd, bwd)]. More generally, [concat(embed, activation(embed))].
-            self.add_link('fwd_rnn', LSTMChain(input_dim=args.projection_dim * 2, hidden_dim=model_dim/2, seq_length=seq_length))
-            self.add_link('bwd_rnn', LSTMChain(input_dim=args.projection_dim * 2, hidden_dim=model_dim/2, seq_length=seq_length))
+            self.add_link('fwd_rnn', LSTMChain(input_dim=args.projection_dim * 2, hidden_dim=args.model_dim/2, seq_length=args.seq_length))
+            self.add_link('bwd_rnn', LSTMChain(input_dim=args.projection_dim * 2, hidden_dim=args.model_dim/2, seq_length=args.seq_length))
 
 
     def build_example(self, sentences, transitions, train):
@@ -490,7 +473,7 @@ class BaseModel(Chain):
         embeds = [F.expand_dims(x, 0) for x in embeds]
         embeds = F.concat(embeds, axis=0)
 
-        if self.use_encode:
+        if self.args.use_encode:
             _, _, fwd_hs = self.fwd_rnn(embeds, train, keep_hs=True)
             _, _, bwd_hs = self.bwd_rnn(embeds, train, keep_hs=True, reverse=True)
             hs = F.concat([fwd_hs, bwd_hs], axis=2)

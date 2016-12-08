@@ -76,7 +76,7 @@ def build_model_args(initial_embeddings, use_sentence_pair, mlp_dim, vocab_size,
     model_args.word_embedding_dim       = FLAGS.word_embedding_dim
     model_args.seq_length               = FLAGS.seq_length
     model_args.input_dropout_rate       = FLAGS.input_dropout_rate
-    model_args.classifier_keep_rate     = FLAGS.semantic_classifier_keep_rate
+    model_args.classifier_dropout_rate  = FLAGS.classifier_dropout_rate
     model_args.use_input_dropout        = FLAGS.use_input_dropout
     model_args.use_input_norm           = FLAGS.use_input_norm
     model_args.tracker_dropout_rate     = FLAGS.tracker_dropout_rate
@@ -589,7 +589,7 @@ if __name__ == '__main__':
     gflags.DEFINE_boolean("save_stack", False, "")
     gflags.DEFINE_boolean("use_tracking_lstm", True,
                           "Whether to use LSTM in the tracking unit")
-    gflags.DEFINE_float("semantic_classifier_keep_rate", 0.9,
+    gflags.DEFINE_float("classifier_dropout_rate", 0.1,
         "Used for dropout in the semantic task classifier.")
     gflags.DEFINE_float("input_dropout_rate", 0.1,
         "Used for dropout on transformed embeddings.")
