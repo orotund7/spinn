@@ -151,7 +151,7 @@ class Tracker(Chain):
 
 class SPINN(Chain):
 
-    def __init__(self, args, normalization=L.BatchNormalization,
+    def __init__(self, args,
                  attention=False, attn_fn=None, use_reinforce=True, use_skips=False):
         super(SPINN, self).__init__(
             reduce=Reduce(args.projection_dim, args.tracker_size, attention, attn_fn))
@@ -463,12 +463,11 @@ class BaseModel(Chain):
         self.add_link('embed', 
                     Embed(args.projection_dim, args.vocab_size, args.input_dropout_rate,
                         vectors=self.initial_embeddings,
-                        normalization=L.BatchNormalization,
                         use_input_dropout=args.use_input_dropout,
                         use_input_norm=args.use_input_norm,
                         ))
 
-        self.add_link('spinn', SPINN(args, normalization=L.BatchNormalization,
+        self.add_link('spinn', SPINN(args,
                  attention=False, attn_fn=None, use_reinforce=args.use_reinforce, use_skips=args.use_skips))
 
         if self.use_encode:

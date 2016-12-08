@@ -360,7 +360,7 @@ class Embed(Chain):
             ~chainer.links.BatchNormalization).
     """
 
-    def __init__(self, size, vocab_size, dropout, vectors, normalization=None,
+    def __init__(self, size, vocab_size, dropout, vectors,
                  make_buffers=True, activation=None,
                  use_input_dropout=False, use_input_norm=False):
         size = 2 * size if make_buffers else size
@@ -369,7 +369,7 @@ class Embed(Chain):
         else:
             super(Embed, self).__init__(projection=L.Linear(vectors.shape[1], size))
         if use_input_norm:
-            self.add_link('normalization', normalization(size))
+            self.add_link('normalization', L.BatchNormalization(size))
         self.vectors = vectors
         self.dropout = dropout
         self.make_buffers = make_buffers
