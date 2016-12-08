@@ -146,16 +146,22 @@ def evaluate(classifier_trainer, eval_set, logger, step, eval_data_limit=-1,
         with open(summaries_file, "w") as f:
             f.write("id,hamming,gold,pred\n")
 
+    # Build Run Args
+
+    run_args = argparse.Namespace()
+    run_args.use_internal_parser = use_internal_parser
+    run_args.validate_transitions = FLAGS.validate_transitions
+    run_args.use_random = FLAGS.use_random
+    run_args.run_internal_parser = FLAGS.transition_weight is not None
+    run_args.print_transitions = False
+
     for i, (eval_X_batch, eval_transitions_batch, eval_y_batch, eval_num_transitions_batch) in enumerate(eval_set[1]):
         # Calculate Local Accuracies
         if eval_data_limit == -1 or i < eval_data_limit:
-            ret = classifier_trainer.forward({
+            ret = classifier_trainer.forward(run_args, {
                 "sentences": eval_X_batch,
                 "transitions": eval_transitions_batch,
-                }, eval_y_batch, train=False, predict=False,
-                use_internal_parser=use_internal_parser,
-                validate_transitions=FLAGS.validate_transitions,
-                use_random=FLAGS.use_random)
+                }, eval_y_batch, train=False, predict=False)
             y, loss, class_loss, transition_acc, transition_loss = ret
             acc_value = float(classifier_trainer.model.accuracy.data)
             action_acc_value = transition_acc
@@ -383,14 +389,20 @@ def run(only_forward=False):
             # Reset cached gradients.
             classifier_trainer.optimizer.zero_grads()
 
+            # Build Run Args
+
+            run_args = argparse.Namespace()
+            run_args.use_internal_parser = FLAGS.use_internal_parser
+            run_args.validate_transitions = FLAGS.validate_transitions
+            run_args.use_random = FLAGS.use_random
+            run_args.run_internal_parser = FLAGS.transition_weight is not None
+            run_args.print_transitions = False
+
             # Calculate loss and update parameters.
-            ret = classifier_trainer.forward({
+            ret = classifier_trainer.forward(run_args, {
                 "sentences": X_batch,
                 "transitions": transitions_batch,
-                }, y_batch, train=True, predict=False,
-                    validate_transitions=FLAGS.validate_transitions,
-                    use_internal_parser=FLAGS.use_internal_parser,
-                    use_random=FLAGS.use_random)
+                }, y_batch, train=True, predict=False)
             y, xent_loss, class_acc, transition_acc, transition_loss = ret
 
             if not printed_total_weights:
