@@ -234,6 +234,7 @@ class SPINN(Chain):
             num_transitions = len(self.bufs[0]) * 2 - 3
 
         for i in range(num_transitions):
+            memory = {}
             if hasattr(self, 'transitions'):
                 transitions = self.transitions[:, i]
                 transition_arr = list(transitions)
@@ -247,7 +248,6 @@ class SPINN(Chain):
                 if transition_hyp is not None and run_internal_parser:
                     transition_hyp = to_cpu(transition_hyp)
                     if hasattr(self, 'transitions'):
-                        memory = {}
                         if self.use_reinforce:
                             probas = F.softmax(transition_hyp)
                             samples = np.array([T_SKIP for _ in self.bufs], dtype=np.int32)
@@ -265,16 +265,7 @@ class SPINN(Chain):
                             truth_acc = transitions
                             truth_xent = transitions
 
-                        if use_random:
-                            print("Using random")
-                            transition_preds = np.random.choice(self.choices, len(self.bufs))
-                        
-                        if validate_transitions:
-                            transition_preds = self.validate(transition_arr, transition_preds,
-                                self.stacks, self.buffers_t, self.buffers_n)
-
                         memory["logits"] = transition_hyp
-                        memory["preds"]  = transition_preds
 
                         if not self.use_skips:
                             hyp_acc = hyp_acc.data[cant_skip]
@@ -290,13 +281,21 @@ class SPINN(Chain):
                         memory["hyp_xent"] = hyp_xent
                         memory["truth_xent"] = truth_xent
 
-                        memory["preds_cm"] = np.array(transition_preds[cant_skip])
-                        memory["truth_cm"] = np.array(transitions[cant_skip])
-
                         if use_internal_parser:
                             transition_arr = transition_preds.tolist()
 
-                        self.memories.append(memory)
+            if use_random:
+                transition_arr = np.random.choice(self.choices, len(self.bufs))
+
+            if validate_transitions:
+                transition_arr = self.validate(transitions, transition_arr,
+                    self.stacks, self.buffers_t, self.buffers_n)
+
+            memory["preds"]  = transition_arr
+            memory["preds_cm"] = np.array(transition_arr[cant_skip])
+            memory["truth_cm"] = np.array(transitions[cant_skip])
+
+            self.memories.append(memory)
 
             lefts, rights, trackings, attentions = [], [], [], []
             batch = zip(transition_arr, self.bufs, self.stacks, self.history,
