@@ -430,6 +430,7 @@ class BaseModel(Chain):
 
         # Extract model_args
         
+        self.args = model_args
         gpu = model_args.gpu
         use_sentence_pair = model_args.use_sentence_pair
         model_dim = model_args.model_dim
