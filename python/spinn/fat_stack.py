@@ -425,31 +425,32 @@ class LSTMChain(Chain):
 
 
 class BaseModel(Chain):
-    def __init__(self, model_args):
+    def __init__(self, args, temp_args):
         super(BaseModel, self).__init__()
 
-        # Extract model_args
+        # Extract args
         
-        self.args = model_args
-        gpu = model_args.gpu
-        use_sentence_pair = model_args.use_sentence_pair
-        model_dim = model_args.model_dim
-        mlp_dim = model_args.mlp_dim
-        num_classes = model_args.num_classes
-        seq_length = model_args.seq_length
+        self.args = args
+        gpu = args.gpu
+        use_sentence_pair = args.use_sentence_pair
+        model_dim = args.model_dim
+        mlp_dim = args.mlp_dim
+        num_classes = args.num_classes
+        seq_length = args.seq_length
         mlp_input_dim = model_dim * 2 if use_sentence_pair else model_dim
         self.classifier = CrossEntropyClassifier(gpu)
         self.__gpu = gpu
         self.__mod = cuda.cupy if gpu >= 0 else np
         self.accFun = accuracy.accuracy
-        self.initial_embeddings = model_args.initial_embeddings
-        initial_embeddings = model_args.initial_embeddings
-        self.classifier_dropout_rate = 1. - model_args.classifier_keep_rate
-        self.use_classifier_norm = model_args.use_classifier_norm
-        self.word_embedding_dim = model_args.word_embedding_dim
+        
+        self.initial_embeddings = temp_args.initial_embeddings
+        
+        self.classifier_dropout_rate = 1. - args.classifier_keep_rate
+        self.use_classifier_norm = args.use_classifier_norm
+        self.word_embedding_dim = args.word_embedding_dim
         self.model_dim = model_dim
-        self.use_reinforce = model_args.use_reinforce
-        self.use_encode = model_args.use_encode
+        self.use_reinforce = args.use_reinforce
+        self.use_encode = args.use_encode
         
         the_gpu.gpu = gpu
 
@@ -457,24 +458,24 @@ class BaseModel(Chain):
         self.add_link('l1', L.Linear(mlp_dim, mlp_dim))
         self.add_link('l2', L.Linear(mlp_dim, num_classes))
 
-        tracker_size = model_args.tracking_lstm_hidden_dim if model_args.use_tracking_lstm else None,
+        tracker_size = args.tracking_lstm_hidden_dim if args.use_tracking_lstm else None,
 
         self.add_link('embed', 
-                    Embed(model_args.projection_dim, model_args.vocab_size, model_args.input_dropout_rate,
-                        vectors=model_args.initial_embeddings,
+                    Embed(args.projection_dim, args.vocab_size, args.input_dropout_rate,
+                        vectors=self.initial_embeddings,
                         normalization=L.BatchNormalization,
-                        use_input_dropout=model_args.use_input_dropout,
-                        use_input_norm=model_args.use_input_norm,
+                        use_input_dropout=args.use_input_dropout,
+                        use_input_norm=args.use_input_norm,
                         ))
 
-        self.add_link('spinn', SPINN(model_args, normalization=L.BatchNormalization,
-                 attention=False, attn_fn=None, use_reinforce=model_args.use_reinforce, use_skips=model_args.use_skips))
+        self.add_link('spinn', SPINN(args, normalization=L.BatchNormalization,
+                 attention=False, attn_fn=None, use_reinforce=args.use_reinforce, use_skips=args.use_skips))
 
         if self.use_encode:
             # TODO: Could probably have a buffer that is [concat(embed, fwd, bwd)] rather
             # than just [concat(fwd, bwd)]. More generally, [concat(embed, activation(embed))].
-            self.add_link('fwd_rnn', LSTMChain(input_dim=model_args.projection_dim * 2, hidden_dim=model_dim/2, seq_length=seq_length))
-            self.add_link('bwd_rnn', LSTMChain(input_dim=model_args.projection_dim * 2, hidden_dim=model_dim/2, seq_length=seq_length))
+            self.add_link('fwd_rnn', LSTMChain(input_dim=args.projection_dim * 2, hidden_dim=model_dim/2, seq_length=seq_length))
+            self.add_link('bwd_rnn', LSTMChain(input_dim=args.projection_dim * 2, hidden_dim=model_dim/2, seq_length=seq_length))
 
 
     def build_example(self, sentences, transitions, train):

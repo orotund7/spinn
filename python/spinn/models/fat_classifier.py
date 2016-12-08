@@ -61,8 +61,8 @@ from sklearn import metrics
 FLAGS = gflags.FLAGS
 
 
-def build_model(model_cls, model_args, trainer_cls, gpu):
-    model = model_cls(model_args)
+def build_model(model_cls, model_args, temp_model_args, trainer_cls, gpu):
+    model = model_cls(model_args, temp_model_args)
 
     classifier_trainer = trainer_cls(model, gpu=gpu)
 
@@ -95,7 +95,6 @@ def build_model_args(initial_embeddings, use_sentence_pair, mlp_dim, vocab_size,
     model_args.projection_dim           = FLAGS.projection_dim
     model_args.vocab_size               = vocab_size
     model_args.use_sentence_pair        = use_sentence_pair
-    model_args.initial_embeddings       = initial_embeddings
     model_args.num_classes              = num_classes
     model_args.mlp_dim                  = mlp_dim
 
@@ -105,7 +104,11 @@ def build_model_args(initial_embeddings, use_sentence_pair, mlp_dim, vocab_size,
         model_args.projection_dim = FLAGS.projection_dim
     model_args.tracker_size = FLAGS.tracking_lstm_hidden_dim if FLAGS.use_tracking_lstm else None
 
-    return model_args
+    temp_model_args = argparse.Namespace()
+
+    temp_model_args.initial_embeddings = initial_embeddings
+
+    return model_args, temp_model_args
 
 
 def build_rewards(logits, y, xent_reward=False):
@@ -318,11 +321,11 @@ def run(only_forward=False):
     num_classes = len(data_manager.LABEL_MAP)
     vocab_size = len(vocabulary)
     mlp_dim = 1024
-    model_args = build_model_args(initial_embeddings, use_sentence_pair, mlp_dim, vocab_size, num_classes)
+    model_args, temp_model_args = build_model_args(initial_embeddings, use_sentence_pair, mlp_dim, vocab_size, num_classes)
 
     # Build Model
     
-    classifier_trainer = build_model(model_cls, model_args, trainer_cls, FLAGS.gpu)
+    classifier_trainer = build_model(model_cls, model_args, temp_model_args, trainer_cls, FLAGS.gpu)
 
     if ".ckpt" in FLAGS.ckpt_path:
         checkpoint_path = FLAGS.ckpt_path
