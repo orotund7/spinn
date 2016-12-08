@@ -34,6 +34,7 @@ if os.environ.get('FORCE_CHAINER_TYPE_CHECK', '0') == '0':
     os.environ['CHAINER_TYPE_CHECK'] = '0'
 
 import gflags
+import argparse
 import numpy as np
 
 from spinn import afs_safe_logger
@@ -60,35 +61,45 @@ from sklearn import metrics
 FLAGS = gflags.FLAGS
 
 
-def build_sentence_pair_model(model_cls, trainer_cls, vocab_size, model_dim, word_embedding_dim,
-                              seq_length, num_classes, initial_embeddings, use_sentence_pair,
-                              gpu):
-    model = model_cls(model_dim, word_embedding_dim, vocab_size,
-             seq_length, initial_embeddings, num_classes, mlp_dim=1024,
-             input_keep_rate=FLAGS.embedding_keep_rate,
-             classifier_keep_rate=FLAGS.semantic_classifier_keep_rate,
-             use_input_dropout=FLAGS.use_input_dropout,
-             use_input_norm=FLAGS.use_input_norm,
-             tracker_dropout_rate=FLAGS.tracker_dropout_rate,
-             use_tracker_dropout=FLAGS.use_tracker_dropout,
-             use_classifier_norm=FLAGS.use_classifier_norm,
-             tracking_lstm_hidden_dim=FLAGS.tracking_lstm_hidden_dim,
-             transition_weight=FLAGS.transition_weight,
-             use_tracking_lstm=FLAGS.use_tracking_lstm,
-             use_shift_composition=FLAGS.use_shift_composition,
-             use_history=FLAGS.use_history,
-             save_stack=FLAGS.save_stack,
-             use_sentence_pair=use_sentence_pair,
-             gpu=gpu,
-             use_reinforce=FLAGS.use_reinforce,
-             use_skips=FLAGS.use_skips,
-             use_encode=FLAGS.use_encode,
-             projection_dim=FLAGS.projection_dim,
-            )
+def build_model(model_cls, model_args, trainer_cls, gpu):
+    model = model_cls(model_args)
 
     classifier_trainer = trainer_cls(model, gpu=gpu)
 
     return classifier_trainer
+
+
+def build_model_args(initial_embeddings, use_sentence_pair, mlp_dim, vocab_size, num_classes):
+    model_args = argparse.Namespace()
+
+    model_args.model_dim                = FLAGS.model_dim
+    model_args.word_embedding_dim       = FLAGS.word_embedding_dim
+    model_args.seq_length               = FLAGS.seq_length
+    model_args.input_keep_rate          = FLAGS.embedding_keep_rate
+    model_args.classifier_keep_rate     = FLAGS.semantic_classifier_keep_rate
+    model_args.use_input_dropout        = FLAGS.use_input_dropout
+    model_args.use_input_norm           = FLAGS.use_input_norm
+    model_args.tracker_dropout_rate     = FLAGS.tracker_dropout_rate
+    model_args.use_tracker_dropout      = FLAGS.use_tracker_dropout
+    model_args.use_classifier_norm      = FLAGS.use_classifier_norm
+    model_args.tracking_lstm_hidden_dim = FLAGS.tracking_lstm_hidden_dim
+    model_args.transition_weight        = FLAGS.transition_weight
+    model_args.use_tracking_lstm        = FLAGS.use_tracking_lstm
+    model_args.use_shift_composition    = FLAGS.use_shift_composition
+    model_args.use_history              = FLAGS.use_history
+    model_args.save_stack               = FLAGS.save_stack
+    model_args.gpu                      = FLAGS.gpu
+    model_args.use_reinforce            = FLAGS.use_reinforce
+    model_args.use_skips                = FLAGS.use_skips
+    model_args.use_encode               = FLAGS.use_encode
+    model_args.projection_dim           = FLAGS.projection_dim
+    model_args.vocab_size               = vocab_size
+    model_args.use_sentence_pair        = use_sentence_pair
+    model_args.initial_embeddings       = initial_embeddings
+    model_args.num_classes              = num_classes
+    model_args.mlp_dim                  = mlp_dim
+
+    return model_args
 
 
 def build_rewards(logits, y, xent_reward=False):
@@ -288,14 +299,6 @@ def run(only_forward=False):
             model_cls = model_module.SentencePairModel
         else:
             raise Exception("Unimplemented for model type %s" % FLAGS.model_type)
-
-        num_classes = len(data_manager.LABEL_MAP)
-        use_sentence_pair = True
-        classifier_trainer = build_sentence_pair_model(model_cls, trainer_cls,
-                              len(vocabulary), FLAGS.model_dim, FLAGS.word_embedding_dim,
-                              FLAGS.seq_length, num_classes, initial_embeddings,
-                              use_sentence_pair,
-                              FLAGS.gpu)
     else:
         if hasattr(model_module, 'SentenceTrainer') and hasattr(model_module, 'SentenceModel'):
             trainer_cls = model_module.SentenceTrainer
@@ -303,13 +306,17 @@ def run(only_forward=False):
         else:
             raise Exception("Unimplemented for model type %s" % FLAGS.model_type)
 
-        num_classes = len(data_manager.LABEL_MAP)
-        use_sentence_pair = False
-        classifier_trainer = build_sentence_pair_model(model_cls, trainer_cls,
-                              len(vocabulary), FLAGS.model_dim, FLAGS.word_embedding_dim,
-                              FLAGS.seq_length, num_classes, initial_embeddings,
-                              use_sentence_pair,
-                              FLAGS.gpu)
+    # Configure Model
+
+    use_sentence_pair = data_manager.SENTENCE_PAIR_DATA
+    num_classes = len(data_manager.LABEL_MAP)
+    vocab_size = len(vocabulary)
+    mlp_dim = 1024
+    model_args = build_model_args(initial_embeddings, use_sentence_pair, mlp_dim, vocab_size, num_classes)
+
+    # Build Model
+    
+    classifier_trainer = build_model(model_cls, model_args, trainer_cls, FLAGS.gpu)
 
     if ".ckpt" in FLAGS.ckpt_path:
         checkpoint_path = FLAGS.ckpt_path

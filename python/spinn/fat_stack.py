@@ -425,67 +425,57 @@ class LSTMChain(Chain):
 
 
 class BaseModel(Chain):
-    def __init__(self, model_dim, word_embedding_dim, vocab_size,
-                 seq_length, initial_embeddings, num_classes, mlp_dim,
-                 input_keep_rate, classifier_keep_rate,
-                 use_tracker_dropout=True, tracker_dropout_rate=0.1,
-                 use_input_dropout=False, use_input_norm=False,
-                 use_classifier_norm=True,
-                 gpu=-1,
-                 tracking_lstm_hidden_dim=4,
-                 transition_weight=None,
-                 use_tracking_lstm=True,
-                 use_shift_composition=True,
-                 use_history=False,
-                 save_stack=False,
-                 use_reinforce=False,
-                 projection_dim=None,
-                 encoding_dim=None,
-                 use_encode=False,
-                 use_skips=False,
-                 use_sentence_pair=False,
-                 **kwargs
-                ):
+    def __init__(self, model_args):
         super(BaseModel, self).__init__()
 
-        the_gpu.gpu = gpu
-
+        # Extract model_args
+        
+        gpu = model_args.gpu
+        use_sentence_pair = model_args.use_sentence_pair
+        model_dim = model_args.model_dim
+        mlp_dim = model_args.mlp_dim
+        num_classes = model_args.num_classes
+        seq_length = model_args.seq_length
         mlp_input_dim = model_dim * 2 if use_sentence_pair else model_dim
-        self.add_link('l0', L.Linear(mlp_input_dim, mlp_dim))
-        self.add_link('l1', L.Linear(mlp_dim, mlp_dim))
-        self.add_link('l2', L.Linear(mlp_dim, num_classes))
-
         self.classifier = CrossEntropyClassifier(gpu)
         self.__gpu = gpu
         self.__mod = cuda.cupy if gpu >= 0 else np
         self.accFun = accuracy.accuracy
-        self.initial_embeddings = initial_embeddings
-        self.classifier_dropout_rate = 1. - classifier_keep_rate
-        self.use_classifier_norm = use_classifier_norm
-        self.word_embedding_dim = word_embedding_dim
+        self.initial_embeddings = model_args.initial_embeddings
+        initial_embeddings = model_args.initial_embeddings
+        self.classifier_dropout_rate = 1. - model_args.classifier_keep_rate
+        self.use_classifier_norm = model_args.use_classifier_norm
+        self.word_embedding_dim = model_args.word_embedding_dim
         self.model_dim = model_dim
-        self.use_reinforce = use_reinforce
-        self.use_encode = use_encode
+        self.use_reinforce = model_args.use_reinforce
+        self.use_encode = model_args.use_encode
+        
+        the_gpu.gpu = gpu
 
+        self.add_link('l0', L.Linear(mlp_input_dim, mlp_dim))
+        self.add_link('l1', L.Linear(mlp_dim, mlp_dim))
+        self.add_link('l2', L.Linear(mlp_dim, num_classes))
+
+        projection_dim = model_args.projection_dim
         if projection_dim <= 0 or not self.use_encode:
             projection_dim = model_dim/2
 
         args = {
             'size': projection_dim,
-            'tracker_size': tracking_lstm_hidden_dim if use_tracking_lstm else None,
-            'transition_weight': transition_weight,
-            'use_history': use_history,
-            'save_stack': save_stack,
-            'input_dropout_rate': 1. - input_keep_rate,
-            'use_input_dropout': use_input_dropout,
-            'use_input_norm': use_input_norm,
-            'use_tracker_dropout': use_tracker_dropout,
-            'tracker_dropout_rate': tracker_dropout_rate,
+            'tracker_size': model_args.tracking_lstm_hidden_dim if model_args.use_tracking_lstm else None,
+            'transition_weight': model_args.transition_weight,
+            'use_history': model_args.use_history,
+            'save_stack': model_args.save_stack,
+            'input_dropout_rate': 1. - model_args.input_keep_rate,
+            'use_input_dropout': model_args.use_input_dropout,
+            'use_input_norm': model_args.use_input_norm,
+            'use_tracker_dropout': model_args.use_tracker_dropout,
+            'tracker_dropout_rate': model_args.tracker_dropout_rate,
         }
         args = argparse.Namespace(**args)
 
         vocab = {
-            'size': initial_embeddings.shape[0] if initial_embeddings is not None else vocab_size,
+            'size': initial_embeddings.shape[0] if initial_embeddings is not None else model_args.vocab_size,
             'vectors': initial_embeddings,
         }
         vocab = argparse.Namespace(**vocab)
@@ -498,7 +488,7 @@ class BaseModel(Chain):
                         ))
 
         self.add_link('spinn', SPINN(args, vocab, normalization=L.BatchNormalization,
-                 attention=False, attn_fn=None, use_reinforce=use_reinforce, use_skips=use_skips))
+                 attention=False, attn_fn=None, use_reinforce=model_args.use_reinforce, use_skips=model_args.use_skips))
 
         if self.use_encode:
             # TODO: Could probably have a buffer that is [concat(embed, fwd, bwd)] rather
