@@ -83,14 +83,6 @@ def build_sentence_pair_model(model_cls, trainer_cls, vocab_size, model_dim, wor
 
     return classifier_trainer
 
-
-def build_rewards(logits, y, xent_reward=False):
-    if xent_reward:
-        return np.mean(logits.data[np.arange(y.shape[0]), y])
-    else:
-        return metrics.accuracy_score(logits.data.argmax(axis=1), y)
-
-
 def hamming_distance(s1, s2):
     """ source: https://en.wikipedia.org/wiki/Hamming_distance
         Return the Hamming distance between equal-length sequences
@@ -174,16 +166,6 @@ def evaluate(classifier_trainer, eval_set, logger, step, eval_data_limit=-1,
     return acc_accum / eval_batches
 
 
-def reinforce(optimizer, lr, baseline, mu, reward, transition_loss):
-    new_lr = (lr*(reward - baseline))
-    baseline = baseline*(1-mu)+mu*reward
-
-    transition_loss.backward()
-    transition_loss.unchain_backward()
-    optimizer.lr = new_lr
-    optimizer.update()
-
-    return new_lr, baseline
 
 
 def run(only_forward=False):
@@ -340,13 +322,6 @@ def run(only_forward=False):
 
         model = classifier_trainer.optimizer.target
 
-        if FLAGS.use_reinforce:
-            optimizer_lr = 0.01
-            baseline = 0
-            mu = 0.1
-            transition_optimizer = optimizers.SGD(lr=optimizer_lr)
-            transition_optimizer.setup(model.spinn.tracker)
-
         # New Training Loop
         progress_bar = SimpleProgressBar(msg="Training", bar_length=60, enabled=FLAGS.show_progress_bar)
         accum_class_acc = deque(maxlen=FLAGS.deq_length)
@@ -379,10 +354,6 @@ def run(only_forward=False):
             truth = [m["truth_cm"] for m in model.spinn.memories]
             accum_preds.append(preds)
             accum_truth.append(truth)
-
-            if FLAGS.use_reinforce:
-                rewards = build_rewards(y, y_batch)
-                logger.Log("\nReward :"+str(rewards))
 
             # Boilerplate for calculating loss.
             transition_cost_val = transition_loss.data if transition_loss is not None else 0.0
@@ -423,10 +394,6 @@ def run(only_forward=False):
             except:
                 import ipdb; ipdb.set_trace()
                 pass
-
-            if FLAGS.use_reinforce:
-                transition_optimizer.zero_grads()
-                optimizer_lr, baseline = reinforce(transition_optimizer, optimizer_lr, baseline, mu, rewards, transition_loss)
 
             # Accumulate accuracy for current interval.
             acc_val = float(classifier_trainer.model.accuracy.data)

@@ -27,6 +27,7 @@ from spinn.util.chainer_blocks import LSTMState, Embed
 from spinn.util.chainer_blocks import MLP
 from spinn.util.chainer_blocks import CrossEntropyClassifier
 from spinn.util.chainer_blocks import bundle, unbundle, the_gpu, to_cpu, to_gpu, treelstm
+from sklearn import metrics
 
 """
 Style Guide:
@@ -169,6 +170,13 @@ class SPINN(Chain):
         self.use_skips = use_skips
         choices = [T_SHIFT, T_REDUCE, T_SKIP] if use_skips else [T_SHIFT, T_REDUCE]
         self.choices = np.array(choices, dtype=np.int32)
+
+        if self.use_reinforce:
+            self.reinforce_lr = 0.01
+            self.baseline = 0
+            self.mu = 0.1
+            self.transition_optimizer = optimizers.SGD(lr=self.reinforce_lr)
+            self.transition_optimizer.setup(self.tracker)
 
     def reset_state(self):
         self.memories = []
@@ -376,6 +384,34 @@ class SPINN(Chain):
         return [stack[-1] for stack in self.stacks], transition_loss
 
 
+    def reinforce(self, rewards):
+        statistics = zip(*[
+            (m["hyp_acc"], m["truth_acc"], m["hyp_xent"], m["truth_xent"])
+            for m in self.memories])
+
+        statistics = [
+            F.squeeze(F.concat([F.expand_dims(ss, 1) for ss in s], axis=0))
+            if isinstance(s[0], Variable) else
+            np.array(reduce(lambda x, y: x + y.tolist(), s, []))
+            for s in statistics]
+
+        hyp_acc, truth_acc, hyp_xent, truth_xent = statistics
+
+        rewards = np.repeat(rewards, (hyp_xent.shape[0] / rewards.shape[0]))
+        rewards -= self.baseline
+        transition_loss = batch_weighted_softmax_cross_entropy(
+            hyp_xent, truth_xent.astype(np.int32), rewards,
+            normalize=False)
+
+        self.transition_optimizer.zero_grads()
+        self.baseline = self.baseline*(1-self.mu) + self.mu*np.mean(rewards)
+
+        transition_loss.backward()
+        transition_loss.unchain_backward()
+
+        self.transition_optimizer.update()
+
+
 class LSTMChain(Chain):
     def __init__(self, input_dim, hidden_dim, seq_length, gpu=-1):
         super(LSTMChain, self).__init__(
@@ -421,6 +457,14 @@ class LSTMChain(Chain):
 
         return c, h, hs
 
+
+
+def build_rewards(logits, y, xent_reward=False):
+    import ipdb; ipdb.set_trace()
+    if xent_reward:
+        return np.mean(logits.data[np.arange(y.shape[0]), y])
+    else:
+        return metrics.accuracy_score(logits.data.argmax(axis=1), y)
 
 class BaseModel(Chain):
     def __init__(self, model_dim, word_embedding_dim, vocab_size,
@@ -572,6 +616,11 @@ class BaseModel(Chain):
         # Calculate Loss & Accuracy.
         accum_loss = self.classifier(y, Variable(y_batch, volatile=not train), train)
         self.accuracy = self.accFun(y, self.__mod.array(y_batch))
+
+        if self.use_reinforce:
+            rewards = np.array([float(F.softmax_cross_entropy(y[i:(i+1)], y_batch[i:(i+1)]).data) for i in range(y_batch.shape[0])])
+            # rewards = build_rewards(accum_loss, y_batch)
+            self.spinn.reinforce(rewards)
 
         if hasattr(transition_acc, 'data'):
           transition_acc = transition_acc.data
