@@ -90,7 +90,7 @@ class SPINNTestCase(unittest.TestCase):
         vocab, initial_embeddings = default_embeddings(vocab_size, embedding_dim)
         self.model = SPINN(args, vocab, use_reinforce=False)
 
-    def test_basic_stack(self):
+    def xtest_basic_stack(self):
         self._setup(seq_length=4)
 
         train = False
