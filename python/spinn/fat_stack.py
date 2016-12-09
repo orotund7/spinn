@@ -20,6 +20,7 @@ from chainer.training import extensions
 
 from chainer.functions.activation import slstm
 from chainer.utils import type_check
+from spinn.util.batch_softmax_cross_entropy import batch_weighted_softmax_cross_entropy
 
 from spinn.util.chainer_blocks import BaseSentencePairTrainer, Reduce
 from spinn.util.chainer_blocks import LSTMState, Embed
@@ -360,8 +361,10 @@ class SPINN(Chain):
 
             transition_acc = F.accuracy(
                 hyp_acc, truth_acc.astype(np.int32))
-            transition_loss = F.softmax_cross_entropy(
-                hyp_xent, truth_xent.astype(np.int32),
+            rewards = np.ndarray((truth_xent.shape[0]))
+            rewards[:] = 1.0 / truth_xent.shape[0]
+            transition_loss = batch_weighted_softmax_cross_entropy(
+                hyp_xent, truth_xent.astype(np.int32), rewards,
                 normalize=False)
 
             reporter.report({'transition_accuracy': transition_acc,
