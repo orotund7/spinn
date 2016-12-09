@@ -352,6 +352,7 @@ class SPINN(Chain):
                             history.append(stack[-1])
         if print_transitions:
             print()
+
         if self.transition_weight is not None:
             # We compute statistics after the fact, since sub-batches can
             # have different sizes when not using skips.
@@ -369,11 +370,11 @@ class SPINN(Chain):
 
             transition_acc = F.accuracy(
                 hyp_acc, truth_acc.astype(np.int32))
-            rewards = np.ndarray((truth_xent.shape[0]))
-            rewards[:] = 1.0 / truth_xent.shape[0]
-            transition_loss = batch_weighted_softmax_cross_entropy(
-                hyp_xent, truth_xent.astype(np.int32), rewards,
-                normalize=False)
+
+            if not self.use_reinforce:
+                transition_loss = softmax_cross_entropy(
+                    hyp_xent, truth_xent.astype(np.int32),
+                    normalize=False)
 
             reporter.report({'transition_accuracy': transition_acc,
                              'transition_loss': transition_loss}, self)
