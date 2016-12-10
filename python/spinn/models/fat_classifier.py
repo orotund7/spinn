@@ -60,6 +60,15 @@ from sklearn import metrics
 FLAGS = gflags.FLAGS
 
 
+def mlp_config():
+    config = []
+    if FLAGS.mlp_dim_1 > 0:
+        config.append({"dim": FLAGS.mlp_dim_1, "dropout": FLAGS.mlp_dropout_1})
+    if FLAGS.mlp_dim_2 > 0:
+        config.append({"dim": FLAGS.mlp_dim_2, "dropout": FLAGS.mlp_dropout_2})
+    return config
+
+
 def build_sentence_pair_model(model_cls, trainer_cls, vocab_size, model_dim, word_embedding_dim,
                               seq_length, num_classes, initial_embeddings, use_sentence_pair,
                               gpu):
@@ -84,6 +93,7 @@ def build_sentence_pair_model(model_cls, trainer_cls, vocab_size, model_dim, wor
              use_skips=FLAGS.use_skips,
              use_encode=FLAGS.use_encode,
              projection_dim=FLAGS.projection_dim,
+             mlp_config=mlp_config()
             )
 
     classifier_trainer = trainer_cls(model, gpu=gpu)
@@ -586,6 +596,12 @@ if __name__ == '__main__':
     gflags.DEFINE_boolean("use_classifier_norm", False, "")
     gflags.DEFINE_float("tracker_dropout_rate", 0.1, "")
     gflags.DEFINE_boolean("lstm_composition", True, "")
+
+    # MLP Settings
+    gflags.DEFINE_float("mlp_dropout_1", 0.0, "")
+    gflags.DEFINE_float("mlp_dropout_2", 0.0, "")
+    gflags.DEFINE_integer("mlp_dim_1", 0, "")
+    gflags.DEFINE_integer("mlp_dim_2", 0, "")
 
     # Optimization settings.
     gflags.DEFINE_integer("training_steps", 500000, "Stop training after this point.")

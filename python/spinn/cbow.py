@@ -78,6 +78,7 @@ class BaseModel(Chain):
                  use_encode=False,
                  use_skips=False,
                  use_sentence_pair=False,
+                 mlp_config=[],
                  **kwargs
                 ):
         super(BaseModel, self).__init__()
@@ -85,9 +86,19 @@ class BaseModel(Chain):
         the_gpu.gpu = gpu
 
         mlp_input_dim = word_embedding_dim * 2 if use_sentence_pair else word_embedding_dim
-        self.add_link('l0', L.Linear(mlp_input_dim, mlp_dim))
-        self.add_link('l1', L.Linear(mlp_dim, mlp_dim))
-        self.add_link('l2', L.Linear(mlp_dim, num_classes))
+
+        if len(mlp_config) == 0:
+            self.add_link('l0', L.Linear(mlp_input_dim, num_classes))
+        elif len(mlp_config) == 1:
+            self.add_link('l0', L.Linear(mlp_input_dim, mlp_config[0]["dim"]))
+            self.add_link('l1', L.Linear(mlp_config[0]["dim"], num_classes))
+        elif len(mlp_config) == 2:
+            self.add_link('l0', L.Linear(mlp_input_dim, mlp_config[0]["dim"]))
+            self.add_link('l1', L.Linear(mlp_config[0]["dim"], mlp_config[1]["dim"]))
+            self.add_link('l2', L.Linear(mlp_config[1]["dim"], num_classes))
+        else:
+            raise Exception("Bad mlp config.")
+        self.mlp_config = mlp_config
 
         self.classifier = CrossEntropyClassifier(gpu)
         self.__gpu = gpu
@@ -108,10 +119,11 @@ class BaseModel(Chain):
 
     def run_mlp(self, h, train):
         h = self.l0(h)
-        h = F.relu(h)
-        h = self.l1(h)
-        h = F.relu(h)
-        h = self.l2(h)
+        for i, config in enumerate(self.mlp_config):
+            h = F.relu(h)
+            h = F.dropout(h, config['dropout'], train)
+            # calls self.l1(h) when i == 0
+            h = getattr(self, 'l{}'.format(i+1))(h)
         y = h
         return h
 
