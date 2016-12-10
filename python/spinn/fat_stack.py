@@ -255,6 +255,7 @@ class SPINN(Chain):
                 if transition_hyp is not None and run_internal_parser:
                     transition_hyp = to_cpu(transition_hyp)
                     if hasattr(self, 'transitions'):
+                        memory = {}
                         if self.use_reinforce:
                             probas = F.softmax(transition_hyp)
                             samples = np.array([T_SKIP for _ in self.bufs], dtype=np.int32)
@@ -276,6 +277,9 @@ class SPINN(Chain):
                             transition_preds = self.validate(transition_arr, transition_preds,
                                 self.stacks, self.buffers_t, self.buffers_n)
 
+                        memory["logits"] = transition_hyp
+                        memory["preds"]  = transition_preds
+
                         if not self.use_skips:
                             hyp_acc = hyp_acc.data[cant_skip]
                             truth_acc = truth_acc[cant_skip]
@@ -287,15 +291,13 @@ class SPINN(Chain):
 
                         self.transition_mask[cant_skip, i] = True
 
-                        memory = {}
-                        memory["hyp_xent"] = hyp_xent
                         memory["hyp_acc"] = hyp_acc
                         memory["truth_acc"] = truth_acc
+                        memory["hyp_xent"] = hyp_xent
                         memory["truth_xent"] = truth_xent
+
                         memory["preds_cm"] = np.array(transition_preds[cant_skip])
                         memory["truth_cm"] = np.array(transitions[cant_skip])
-                        memory["logits"] = transition_hyp
-                        memory["preds"]  = transition_preds
 
                         if use_internal_parser:
                             transition_arr = transition_preds.tolist()
@@ -369,10 +371,9 @@ class SPINN(Chain):
             transition_acc = F.accuracy(
                 hyp_acc, truth_acc.astype(np.int32))
 
-            if not self.use_reinforce:
-                transition_loss = softmax_cross_entropy(
-                    hyp_xent, truth_xent.astype(np.int32),
-                    normalize=False)
+            transition_loss = F.softmax_cross_entropy(
+                hyp_xent, truth_xent.astype(np.int32),
+                normalize=False)
 
             reporter.report({'transition_accuracy': transition_acc,
                              'transition_loss': transition_loss}, self)
@@ -608,7 +609,7 @@ class BaseModel(Chain):
         self.accuracy = self.accFun(y, self.__mod.array(y_batch))
 
         if self.use_reinforce:
-            rewards = np.array([float(F.softmax_cross_entropy(y[i:(i+1)], y_batch[i:(i+1)]).data) for i in range(y_batch.shape[0])])
+            rewards = - np.array([float(F.softmax_cross_entropy(y[i:(i+1)], y_batch[i:(i+1)]).data) for i in range(y_batch.shape[0])])
             self.spinn.reinforce(rewards)
 
         if hasattr(transition_acc, 'data'):
