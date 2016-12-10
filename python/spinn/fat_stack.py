@@ -178,14 +178,19 @@ class SPINN(Chain):
             self.transition_optimizer = optimizers.SGD(lr=self.reinforce_lr)
             self.transition_optimizer.setup(self.tracker)
 
-    def reset_state(self):
-        self.memories = []
-
     def __call__(self, example, attention=None, print_transitions=False,
                  use_internal_parser=False, validate_transitions=True):
         self.bufs = example.tokens
         self.stacks = [[] for buf in self.bufs]
         self.buffers_t = [0 for buf in self.bufs]
+        self.memories = []
+        self.souvenirs = {}
+        # BATCH_SIZE * SEQ_LEN
+        self.souvenirs["truth_acc"] = np.zeros((len(example.tokens), len(example.tokens[0])))
+        self.souvenirs["truth_xent"] = np.zeros((len(example.tokens), len(example.tokens[0])))
+        self.souvenirs["hyp_acc"] = np.zeros((len(example.tokens), len(example.tokens[0]), self.choices.shape[0]))
+
+
         # There are 2 * N - 1 transitons, so (|transitions| + 1) / 2 should equal N.
         self.buffers_n = [(len([t for t in ts if t != T_SKIP]) + 1) / 2 for ts in example.transitions]
         for stack, buf in zip(self.stacks, self.bufs):
@@ -204,9 +209,6 @@ class SPINN(Chain):
                         validate_transitions=validate_transitions)
 
     def validate(self, transitions, preds, stacks, buffers_t, buffers_n):
-        # TODO: Almost definitely these don't work as expected because of how
-        # things are initialized and because of the SKIP action.
-
         DEFAULT_CHOICE = T_SHIFT
         cant_skip = np.array([p == T_SKIP and t != T_SKIP for t, p in zip(transitions, preds)])
         preds[cant_skip] = DEFAULT_CHOICE
@@ -249,13 +251,13 @@ class SPINN(Chain):
             #     transition_arr = [0]*len(self.bufs)
                 raise Exception('Running without transitions not implemented')
 
+            print(i)
             cant_skip = np.array([t != T_SKIP for t in transitions])
             if hasattr(self, 'tracker') and (self.use_skips or sum(cant_skip) > 0):
                 transition_hyp = self.tracker(self.bufs, self.stacks)
                 if transition_hyp is not None and run_internal_parser:
                     transition_hyp = to_cpu(transition_hyp)
                     if hasattr(self, 'transitions'):
-                        memory = {}
                         if self.use_reinforce:
                             probas = F.softmax(transition_hyp)
                             samples = np.array([T_SKIP for _ in self.bufs], dtype=np.int32)
@@ -277,25 +279,28 @@ class SPINN(Chain):
                             transition_preds = self.validate(transition_arr, transition_preds,
                                 self.stacks, self.buffers_t, self.buffers_n)
 
-                        memory["logits"] = transition_hyp
-                        memory["preds"]  = transition_preds
-
                         if not self.use_skips:
                             hyp_acc = hyp_acc.data[cant_skip]
                             truth_acc = truth_acc[cant_skip]
 
                             cant_skip_mask = np.tile(np.expand_dims(cant_skip, axis=1), (1, 2))
                             hyp_xent = F.split_axis(transition_hyp, transition_hyp.shape[0], axis=0)
-                            hyp_xent = F.concat([hyp_xent[i] for i, y in enumerate(cant_skip) if y], axis=0)
+                            hyp_xent = F.concat([hyp_xent[iii] for iii, y in enumerate(cant_skip) if y], axis=0)
                             truth_xent = truth_xent[cant_skip]
 
+                        self.souvenirs["truth_acc"][:, i]  = truth_acc
+                        self.souvenirs["truth_xent"][:, i] = truth_xent
+                        self.souvenirs["hyp_acc"][:, i, :] = hyp_acc
+
+                        memory = {}
+                        memory["hyp_xent"] = hyp_xent
                         memory["hyp_acc"] = hyp_acc
                         memory["truth_acc"] = truth_acc
-                        memory["hyp_xent"] = hyp_xent
                         memory["truth_xent"] = truth_xent
-
                         memory["preds_cm"] = np.array(transition_preds[cant_skip])
                         memory["truth_cm"] = np.array(transitions[cant_skip])
+                        memory["logits"] = transition_hyp
+                        memory["preds"]  = transition_preds
 
                         if use_internal_parser:
                             transition_arr = transition_preds.tolist()
@@ -350,8 +355,6 @@ class SPINN(Chain):
                         stack.append(new_stack_item)
                         if self.use_history:
                             history.append(stack[-1])
-        if print_transitions:
-            print()
 
         if self.transition_weight is not None:
             # We compute statistics after the fact, since sub-batches can
@@ -382,6 +385,7 @@ class SPINN(Chain):
         else:
             transition_loss = None
 
+        import ipdb; ipdb.set_trace()
         return [stack[-1] for stack in self.stacks], transition_loss
 
 
@@ -533,7 +537,7 @@ class BaseModel(Chain):
         }
         vocab = argparse.Namespace(**vocab)
 
-        self.add_link('embed', 
+        self.add_link('embed',
                     Embed(args.size, vocab.size, args.input_dropout_rate,
                         vectors=vocab.vectors, normalization=L.BatchNormalization,
                         use_input_dropout=args.use_input_dropout,
@@ -584,7 +588,6 @@ class BaseModel(Chain):
         r.add_observer('spinn', self.spinn)
         observation = {}
         with r.scope(observation):
-            self.spinn.reset_state()
             h_both, _ = self.spinn(example,
                                    use_internal_parser=use_internal_parser,
                                    validate_transitions=validate_transitions)

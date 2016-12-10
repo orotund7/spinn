@@ -289,6 +289,7 @@ def run(only_forward=False):
         checkpoint_path = FLAGS.ckpt_path
     else:
         checkpoint_path = os.path.join(FLAGS.ckpt_path, FLAGS.experiment_name + ".ckpt")
+        
     if os.path.isfile(checkpoint_path):
         # TODO: Check that resuming works fine with tf summaries.
         logger.Log("Found checkpoint, restoring.")
