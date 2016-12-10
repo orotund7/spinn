@@ -91,10 +91,16 @@ class BaseModel(Chain):
             self.add_link('l0', L.Linear(mlp_input_dim, num_classes))
         elif len(mlp_config) == 1:
             self.add_link('l0', L.Linear(mlp_input_dim, mlp_config[0]["dim"]))
+            if mlp_config[0]["bn"]:
+                self.add_link('bn1', L.BatchNormalization(mlp_config[0]["dim"]))
             self.add_link('l1', L.Linear(mlp_config[0]["dim"], num_classes))
         elif len(mlp_config) == 2:
             self.add_link('l0', L.Linear(mlp_input_dim, mlp_config[0]["dim"]))
+            if mlp_config[0]["bn"]:
+                self.add_link('bn1', L.BatchNormalization(mlp_config[0]["dim"]))
             self.add_link('l1', L.Linear(mlp_config[0]["dim"], mlp_config[1]["dim"]))
+            if mlp_config[1]["bn"]:
+                self.add_link('bn2', L.BatchNormalization(mlp_config[1]["dim"]))
             self.add_link('l2', L.Linear(mlp_config[1]["dim"], num_classes))
         else:
             raise Exception("Bad mlp config.")
@@ -120,6 +126,8 @@ class BaseModel(Chain):
     def run_mlp(self, h, train):
         h = self.l0(h)
         for i, config in enumerate(self.mlp_config):
+            if self.mlp_config[i]['bn']:
+                h = getattr(self, 'bn{}'.format(i+1))(h, test=not train)
             h = F.relu(h)
             h = F.dropout(h, config['dropout'], train)
             # calls self.l1(h) when i == 0

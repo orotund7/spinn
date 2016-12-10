@@ -63,9 +63,9 @@ FLAGS = gflags.FLAGS
 def mlp_config():
     config = []
     if FLAGS.mlp_dim_1 > 0:
-        config.append({"dim": FLAGS.mlp_dim_1, "dropout": FLAGS.mlp_dropout_1})
+        config.append({"dim": FLAGS.mlp_dim_1, "dropout": FLAGS.mlp_dropout_1, "bn": FLAGS.mlp_bn_1})
     if FLAGS.mlp_dim_2 > 0:
-        config.append({"dim": FLAGS.mlp_dim_2, "dropout": FLAGS.mlp_dropout_2})
+        config.append({"dim": FLAGS.mlp_dim_2, "dropout": FLAGS.mlp_dropout_2, "bn": FLAGS.mlp_bn_2})
     return config
 
 
@@ -602,6 +602,8 @@ if __name__ == '__main__':
     gflags.DEFINE_float("mlp_dropout_2", 0.0, "")
     gflags.DEFINE_integer("mlp_dim_1", 0, "")
     gflags.DEFINE_integer("mlp_dim_2", 0, "")
+    gflags.DEFINE_boolean("mlp_bn_1", False, "")
+    gflags.DEFINE_boolean("mlp_bn_2", False, "")
 
     # Optimization settings.
     gflags.DEFINE_integer("training_steps", 500000, "Stop training after this point.")
