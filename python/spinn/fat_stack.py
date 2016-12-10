@@ -74,7 +74,7 @@ def HeKaimingInit(shape, real_shape=None):
                             size=shape)
 
 def expandAlong(rewards, tr_mask):
-    return np.extract(tr_mask, np.multiply(tr_mask, np.tile(rewards, (tr_mask.shape[1], 1)).T))
+    return np.extract(tr_mask.T, np.tile(rewards, (tr_mask.shape[1], 1)))
 
 
 class SentencePairTrainer(BaseSentencePairTrainer):
@@ -396,7 +396,6 @@ class SPINN(Chain):
             for s in statistics]
 
         hyp_acc, truth_acc, hyp_xent, truth_xent = statistics
-
         # Expand rewards
         rewards = expandAlong(rewards, self.transition_mask)
 
