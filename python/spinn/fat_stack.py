@@ -178,7 +178,8 @@ class SPINN(Chain):
             self.reinforce_lr = 0.01
             self.baseline = 0
             self.mu = 0.1
-            self.transition_optimizer = optimizers.SGD(lr=self.reinforce_lr)
+            # self.transition_optimizer = optimizers.SGD(lr=self.reinforce_lr)
+            self.transition_optimizer = optimizers.Adam(alpha=0.0003, beta1=0.9, beta2=0.999, eps=1e-08)
             self.transition_optimizer.setup(self.tracker)
 
     def __call__(self, example, attention=None, print_transitions=False,
@@ -256,6 +257,8 @@ class SPINN(Chain):
                     transition_hyp = to_cpu(transition_hyp)
                     if hasattr(self, 'transitions'):
                         memory = {}
+                        truth_acc = transitions
+                        hyp_xent = transition_hyp
                         if self.use_reinforce:
                             probas = F.softmax(transition_hyp)
                             samples = np.array([T_SKIP for _ in self.bufs], dtype=np.int32)
@@ -263,14 +266,10 @@ class SPINN(Chain):
 
                             transition_preds = samples
                             hyp_acc = probas
-                            hyp_xent = probas
-                            truth_acc = transitions
                             truth_xent = samples
                         else:
                             transition_preds = transition_hyp.data.argmax(axis=1)
                             hyp_acc = transition_hyp
-                            hyp_xent = transition_hyp
-                            truth_acc = transitions
                             truth_xent = transitions
 
                         if validate_transitions:
