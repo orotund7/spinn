@@ -73,6 +73,9 @@ def HeKaimingInit(shape, real_shape=None):
     return np.random.normal(scale=np.sqrt(4.0/(fan[0] + fan[1])),
                             size=shape)
 
+def expandAlong(rewards, tr_mask):
+    return np.extract(tr_mask, np.multiply(tr_mask, np.tile(rewards, (tr_mask.shape[1], 1)).T))
+
 
 class SentencePairTrainer(BaseSentencePairTrainer):
     def init_params(self, **kwargs):
@@ -184,12 +187,7 @@ class SPINN(Chain):
         self.stacks = [[] for buf in self.bufs]
         self.buffers_t = [0 for buf in self.bufs]
         self.memories = []
-        self.souvenirs = {}
-        # BATCH_SIZE * SEQ_LEN
-        self.souvenirs["truth_acc"] = np.zeros((len(example.tokens), len(example.tokens[0])))
-        self.souvenirs["truth_xent"] = np.zeros((len(example.tokens), len(example.tokens[0])))
-        self.souvenirs["hyp_acc"] = np.zeros((len(example.tokens), len(example.tokens[0]), self.choices.shape[0]))
-
+        self.transition_mask = np.zeros((len(example.tokens), len(example.tokens[0])), dtype=bool)
 
         # There are 2 * N - 1 transitons, so (|transitions| + 1) / 2 should equal N.
         self.buffers_n = [(len([t for t in ts if t != T_SKIP]) + 1) / 2 for ts in example.transitions]
@@ -251,7 +249,6 @@ class SPINN(Chain):
             #     transition_arr = [0]*len(self.bufs)
                 raise Exception('Running without transitions not implemented')
 
-            print(i)
             cant_skip = np.array([t != T_SKIP for t in transitions])
             if hasattr(self, 'tracker') and (self.use_skips or sum(cant_skip) > 0):
                 transition_hyp = self.tracker(self.bufs, self.stacks)
@@ -288,9 +285,7 @@ class SPINN(Chain):
                             hyp_xent = F.concat([hyp_xent[iii] for iii, y in enumerate(cant_skip) if y], axis=0)
                             truth_xent = truth_xent[cant_skip]
 
-                        self.souvenirs["truth_acc"][:, i]  = truth_acc
-                        self.souvenirs["truth_xent"][:, i] = truth_xent
-                        self.souvenirs["hyp_acc"][:, i, :] = hyp_acc
+                        self.transition_mask[cant_skip, i] = True
 
                         memory = {}
                         memory["hyp_xent"] = hyp_xent
@@ -385,7 +380,6 @@ class SPINN(Chain):
         else:
             transition_loss = None
 
-        import ipdb; ipdb.set_trace()
         return [stack[-1] for stack in self.stacks], transition_loss
 
 
@@ -402,10 +396,11 @@ class SPINN(Chain):
 
         hyp_acc, truth_acc, hyp_xent, truth_xent = statistics
 
-        rewards = np.repeat(rewards, (hyp_xent.shape[0] / rewards.shape[0]))
-        rewards -= self.baseline
+        # Expand rewards
+        rewards = expandAlong(rewards, self.transition_mask)
+
         transition_loss = batch_weighted_softmax_cross_entropy(
-            hyp_xent, truth_xent.astype(np.int32), rewards,
+            hyp_xent, truth_xent.astype(np.int32), rewards - self.baseline,
             normalize=False)
 
         self.transition_optimizer.zero_grads()
@@ -461,15 +456,6 @@ class LSTMChain(Chain):
             hs = None
 
         return c, h, hs
-
-
-
-def build_rewards(logits, y, xent_reward=False):
-    import ipdb; ipdb.set_trace()
-    if xent_reward:
-        return np.mean(logits.data[np.arange(y.shape[0]), y])
-    else:
-        return metrics.accuracy_score(logits.data.argmax(axis=1), y)
 
 class BaseModel(Chain):
     def __init__(self, model_dim, word_embedding_dim, vocab_size,
@@ -623,7 +609,6 @@ class BaseModel(Chain):
 
         if self.use_reinforce:
             rewards = np.array([float(F.softmax_cross_entropy(y[i:(i+1)], y_batch[i:(i+1)]).data) for i in range(y_batch.shape[0])])
-            # rewards = build_rewards(accum_loss, y_batch)
             self.spinn.reinforce(rewards)
 
         if hasattr(transition_acc, 'data'):

@@ -289,7 +289,7 @@ def run(only_forward=False):
         checkpoint_path = FLAGS.ckpt_path
     else:
         checkpoint_path = os.path.join(FLAGS.ckpt_path, FLAGS.experiment_name + ".ckpt")
-        
+
     if os.path.isfile(checkpoint_path):
         # TODO: Check that resuming works fine with tf summaries.
         logger.Log("Found checkpoint, restoring.")
@@ -357,7 +357,7 @@ def run(only_forward=False):
             accum_truth.append(truth)
 
             # Boilerplate for calculating loss.
-            transition_cost_val = transition_loss.data if transition_loss is not None else 0.0
+            transition_cost_val = transition_loss.data if transition_loss is not 0 else 0.0
             accum_class_acc.append(class_acc)
 
             # Extract L2 Cost
